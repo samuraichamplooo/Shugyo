@@ -554,7 +554,8 @@ fun BrowserScreen(state: BrowserState) {
                                     hideOverlays = false
                                     if (bmp == null) break
                                     if (last != null && WebScanner.same(last, bmp)) break
-                                    withContext(Dispatchers.IO) { Basket.addSnap(bmp, t.title) }
+                                    val title = t.title
+                                    withContext(Dispatchers.IO) { Basket.addSnap(bmp, title) }
                                     count++
                                     busy = "Snapped $count screens…"
                                     last = bmp
@@ -683,9 +684,19 @@ fun BrowserScreen(state: BrowserState) {
                     scope.launch {
                         busy = "Reading the page…"
                         val t = state.current
-                        val frames = t.scanner.scan()
-                        val page = withContext(Dispatchers.IO) {
-                            Basket.pageFromScan(frames, t.url, t.webView.settings.userAgentString.orEmpty())
+                        // Everything about the WebView is read here, on the main thread: Android closes
+                        // the app if a WebView is touched from a background thread.
+                        val url = t.url
+                        val agent = t.webView.settings.userAgentString.orEmpty()
+                        val page = try {
+                            val frames = t.scanner.scan()
+                            withContext(Dispatchers.IO) { Basket.pageFromScan(frames, url, agent) }
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Throwable) {
+                            busy = ""
+                            message = "Couldn't read this page (${e.javaClass.simpleName}). Try 📸 Snap instead."
+                            return@launch
                         }
                         busy = ""
                         message = when {
@@ -713,7 +724,8 @@ fun BrowserScreen(state: BrowserState) {
                         val bmp = WebScanner.snap(state.activity, t.webView)
                         hideOverlays = false
                         if (bmp != null) {
-                            withContext(Dispatchers.IO) { Basket.addSnap(bmp, t.title) }
+                            val title = t.title
+                            withContext(Dispatchers.IO) { Basket.addSnap(bmp, title) }
                             message = "Snapped this screen. Scroll and snap again, or tap Build."
                         } else message = "Couldn't take a picture of this screen."
                     }

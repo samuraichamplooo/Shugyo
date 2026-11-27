@@ -16,6 +16,20 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.Modifier
 import dev.shugyo.build.Builder
 import dev.shugyo.data.Store
@@ -86,6 +100,10 @@ fun Root(activity: Activity) {
 
     BackHandler(enabled = Nav.stack.size > 1) { Nav.back() }
 
+    // The app closed unexpectedly last time: show what went wrong, once.
+    val crashFile = remember { java.io.File(activity.filesDir, dev.shugyo.App.CRASH_FILE) }
+    var crash by remember { mutableStateOf(if (crashFile.exists()) crashFile.readText() else null) }
+
     Box(
         Modifier
             .fillMaxSize()
@@ -110,4 +128,46 @@ fun Root(activity: Activity) {
             }
         }
     }
+
+    crash?.let { text ->
+        CrashDialog(text) {
+            crashFile.delete()
+            crash = null
+        }
+    }
+}
+
+@Composable
+private fun CrashDialog(text: String, onClose: () -> Unit) {
+    val clipboard = LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onClose,
+        containerColor = CardHigh,
+        title = { Text("Shugyō closed unexpectedly") },
+        text = {
+            Column(
+                Modifier
+                    .heightIn(max = 440.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                Text(
+                    "Here's what went wrong. Tap Copy and paste it to Claude (or screenshot it) so it can be fixed.",
+                    color = Gold, fontSize = 13.sp,
+                )
+                Text(
+                    text.lines().take(60).joinToString("\n"),
+                    color = Soft, fontSize = 11.sp, lineHeight = 14.sp, fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.padding(top = 10.dp),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                clipboard.setText(AnnotatedString(text))
+                copied = true
+            }) { Text(if (copied) "Copied ✓" else "Copy", color = Gold) }
+        },
+        dismissButton = { TextButton(onClick = onClose) { Text("Close", color = Faint) } },
+    )
 }
