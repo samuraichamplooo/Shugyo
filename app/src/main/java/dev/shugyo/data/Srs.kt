@@ -19,10 +19,12 @@ object Srs {
 
     fun termCard(t: Term) = "t:${t.id}"
     fun figureCard(f: Figure) = "f:${f.id}"
+    fun factCard(c: FactCard) = "c:${c.id}"
 
-    /** Every flashcard in a set: its key terms, then its explained diagrams. */
+    /** Every flashcard in a set: its key terms, its fact cards, then its explained diagrams. */
     fun cardIds(deck: Deck): List<String> =
-        deck.terms.map { termCard(it) } + deck.figures.filter { it.explain.isNotBlank() }.map { figureCard(it) }
+        deck.terms.map { termCard(it) } + deck.cards.map { factCard(it) } +
+            deck.figures.filter { it.explain.isNotBlank() }.map { figureCard(it) }
 
     fun grade(s: CardState?, g: Grade): CardState {
         val cur = s ?: CardState()

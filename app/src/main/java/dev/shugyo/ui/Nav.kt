@@ -11,6 +11,8 @@ sealed interface Route {
     data class DeckHome(val deckId: String) : Route
     data class Learn(val deckId: String) : Route
     data class Lesson(val deckId: String, val index: Int) : Route
+    /** The step-by-step lesson for one objective. */
+    data class Player(val deckId: String, val index: Int) : Route
     data class Cards(val deckId: String, val all: Boolean = false, val starred: Boolean = false) : Route
     data class Quiz(val deckId: String, val objectiveId: String = "", val missedOnly: Boolean = false) : Route
     data class Notes(val deckId: String, val tab: Int = 0) : Route

@@ -58,6 +58,12 @@ fun DeckScreen(deckId: String) {
     val missed = deck.questions.count { (p.qWrong[it.id] ?: 0) > (p.qRight[it.id] ?: 0) }
     var menu by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
+    val run by BuildRunner.state.collectAsState()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val cardCount = Srs.cardIds(deck).size
+    androidx.compose.runtime.LaunchedEffect(run.doneDeck) {
+        if (run.upgrade && run.doneDeck == deck.id) BuildRunner.clear()
+    }
     var confirm by remember { mutableStateOf("") }
 
     Screen(
@@ -70,6 +76,10 @@ fun DeckScreen(deckId: String) {
                     DropdownMenuItem(text = { Text("Rename") }, onClick = {
                         menu = false
                         renaming = true
+                    })
+                    DropdownMenuItem(text = { Text("✨ Add lessons & more cards") }, onClick = {
+                        menu = false
+                        BuildRunner.upgrade(context, deck.id)
                     })
                     DropdownMenuItem(text = { Text("Reset progress") }, onClick = {
                         menu = false
@@ -109,15 +119,50 @@ fun DeckScreen(deckId: String) {
                     }
                 }
             }
+            if (run.running && run.upgrade) {
+                item {
+                    InkCard(border = Gold.copy(alpha = 0.4f)) {
+                        Text("✨ Adding lessons and cards… ${(run.fraction * 100).toInt()}%", color = Paper, fontWeight = FontWeight.SemiBold)
+                        Text(run.status, color = Faint, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Spacer(Modifier.height(8.dp))
+                        Bar(run.fraction, Gold)
+                        Spacer(Modifier.height(6.dp))
+                        Text("You can leave the app; it keeps going.", color = Faint, fontSize = 12.sp)
+                    }
+                }
+            } else if (run.upgrade && run.error.isNotEmpty()) {
+                item {
+                    InkCard(color = BadDeep, border = Bad.copy(alpha = 0.4f)) {
+                        Text("The upgrade didn't finish", color = Bad, fontWeight = FontWeight.Bold)
+                        Text(run.error, color = Soft, fontSize = 14.sp)
+                        Spacer(Modifier.height(8.dp))
+                        GhostButton("Try again", { BuildRunner.clear(); BuildRunner.upgrade(context, deck.id) })
+                    }
+                }
+            } else if (!deck.hasLessons || deck.cards.isEmpty()) {
+                item {
+                    InkCard(border = Gold.copy(alpha = 0.45f)) {
+                        Text("✨ Make this set complete", color = Gold, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Adds a step-by-step lesson for every objective, 5–10 extra flashcards each, and more practice " +
+                                "questions where there are few. Takes a few minutes and keeps going in the background.",
+                            color = Soft, fontSize = 14.sp,
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        BigButton("Upgrade this set", { BuildRunner.upgrade(context, deck.id) }, Modifier.fillMaxWidth(), color = Gold, textColor = Ink)
+                    }
+                }
+            }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     ModeTile(
-                        "📘", "Learn", "${deck.objectives.size} objectives, made simple", LearnColor,
+                        "📘", "Learn", "${deck.objectives.size} step-by-step lessons", LearnColor,
                         badge = if (learned < deck.objectives.size) "${deck.objectives.size - learned} to go" else "done ✓",
                         modifier = Modifier.weight(1f),
                     ) { Nav.go(Route.Learn(deck.id)) }
                     ModeTile(
-                        "🃏", "Flashcards", "${deck.terms.size} terms with memory tricks", CardsColor,
+                        "🃏", "Flashcards", "$cardCount cards: terms, facts & diagrams", CardsColor,
                         badge = if (due > 0) "$due due" else "all caught up",
                         modifier = Modifier.weight(1f),
                     ) { Nav.go(Route.Cards(deck.id)) }

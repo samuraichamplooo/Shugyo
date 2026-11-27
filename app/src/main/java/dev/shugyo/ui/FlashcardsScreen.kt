@@ -228,6 +228,7 @@ private fun FlipCard(deck: Deck, cardId: String, flipped: Boolean, definitionFir
         ) {
             val term = if (cardId.startsWith("t:")) deck.term(cardId.removePrefix("t:")) else null
             val fig = if (cardId.startsWith("f:")) deck.figures.firstOrNull { it.id == cardId.removePrefix("f:") } else null
+            val fact = if (cardId.startsWith("c:")) deck.card(cardId.removePrefix("c:")) else null
             when {
                 term != null && !showBack && !definitionFirst -> {
                     Text("TERM", style = Label)
@@ -250,6 +251,22 @@ private fun FlipCard(deck: Deck, cardId: String, flipped: Boolean, definitionFir
                     if (term.simple.isNotBlank()) Back("🗣 In plain words", term.simple, LearnColor)
                     if (term.mnemonic.isNotBlank()) Back("🧠 Memory trick", term.mnemonic, Gold)
                     if (term.example.isNotBlank()) Back("💡 Example", term.example, NotesColor)
+                }
+                fact != null && !showBack -> {
+                    Text("QUESTION", style = Label)
+                    Spacer(Modifier.height(12.dp))
+                    RichText(
+                        fact.front, color = Paper,
+                        style = MaterialTheme.typography.bodyLarge.copy(fontSize = 22.sp, lineHeight = 31.sp, textAlign = TextAlign.Center),
+                    )
+                }
+                fact != null -> {
+                    RichText(fact.front, color = Faint, style = MaterialTheme.typography.bodyMedium.copy(textAlign = TextAlign.Center))
+                    Spacer(Modifier.height(14.dp))
+                    RichText(
+                        fact.back, color = Paper,
+                        style = MaterialTheme.typography.bodyLarge.copy(fontSize = 20.sp, lineHeight = 29.sp, textAlign = TextAlign.Center),
+                    )
                 }
                 fig != null && !showBack -> {
                     Text("WHAT DOES THIS SHOW?", style = Label)

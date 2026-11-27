@@ -6,14 +6,27 @@ import org.json.JSONObject
 /** One part of the chapter, in plain words. */
 data class Section(val title: String, val summary: String, val points: List<String>)
 
-/** A learning objective (outcome) from the book, with a plain-words version. */
+/** One step of a lesson: a small idea, explained simply. */
+data class Beat(
+    val title: String,
+    val text: String,
+    val terms: List<String> = emptyList(),
+    val figure: String = "",
+)
+
+/** A learning objective (outcome) from the book, with a plain-words version and a step-by-step lesson. */
 data class Objective(
     val id: String,
     val text: String,
     val simple: String,
     val explain: String,
     val terms: List<String>,
+    val lesson: List<Beat> = emptyList(),
+    val recap: String = "",
 )
+
+/** A flashcard for a fact from the reading (a question on the front, the answer on the back). */
+data class FactCard(val id: String, val front: String, val back: String, val objective: String)
 
 data class Term(
     val id: String,
@@ -86,8 +99,13 @@ data class Deck(
     val tables: List<TableBlock>,
     val figures: List<Figure>,
     val questions: List<Question>,
+    val cards: List<FactCard> = emptyList(),
 ) {
+    val hasLessons get() = objectives.any { it.lesson.isNotEmpty() }
     fun term(id: String) = terms.firstOrNull { it.id == id }
+    fun figure(id: String) = figures.firstOrNull { it.id == id }
+    fun card(id: String) = cards.firstOrNull { it.id == id }
+    fun cardsFor(o: Objective) = cards.filter { it.objective == o.id }
     fun objective(id: String) = objectives.firstOrNull { it.id == id }
     fun termsFor(o: Objective): List<Term> {
         val linked = o.terms.mapNotNull { term(it) }
@@ -106,7 +124,13 @@ data class Deck(
         }))
         .put("objectives", JSONArray(objectives.map {
             JSONObject().put("id", it.id).put("text", it.text).put("simple", it.simple)
-                .put("explain", it.explain).put("terms", strings(it.terms))
+                .put("explain", it.explain).put("terms", strings(it.terms)).put("recap", it.recap)
+                .put("lesson", JSONArray(it.lesson.map { b ->
+                    JSONObject().put("title", b.title).put("text", b.text).put("terms", strings(b.terms)).put("figure", b.figure)
+                }))
+        }))
+        .put("cards", JSONArray(cards.map {
+            JSONObject().put("id", it.id).put("front", it.front).put("back", it.back).put("objective", it.objective)
         }))
         .put("terms", JSONArray(terms.map {
             JSONObject().put("id", it.id).put("term", it.term).put("definition", it.definition)
@@ -141,7 +165,11 @@ data class Deck(
                 Section(it.str("title"), it.str("summary"), it.strList("points"))
             },
             objectives = objects(o.optJSONArray("objectives")).map {
-                Objective(it.str("id"), it.str("text"), it.str("simple"), it.str("explain"), it.strList("terms"))
+                Objective(
+                    it.str("id"), it.str("text"), it.str("simple"), it.str("explain"), it.strList("terms"),
+                    objects(it.optJSONArray("lesson")).map { b -> Beat(b.str("title"), b.str("text"), b.strList("terms"), b.str("figure")) },
+                    it.str("recap"),
+                )
             },
             terms = objects(o.optJSONArray("terms")).map {
                 Term(
@@ -168,6 +196,9 @@ data class Deck(
                     ints(it.optJSONArray("answer")), it.str("hint"), it.str("explain"),
                     it.str("objective"), it.str("term"), it.optInt("level", 1),
                 )
+            },
+            cards = objects(o.optJSONArray("cards")).map {
+                FactCard(it.str("id"), it.str("front"), it.str("back"), it.str("objective"))
             },
         )
     }

@@ -68,6 +68,27 @@ object PageTools {
 })()
 """
 
+    /** The page's embedded frames (like a textbook shown inside Moodle), with their size on screen. */
+    val FRAMES = """
+(function () {
+  var out = [];
+  var fs = document.querySelectorAll('iframe, frame, object[data], embed[src]');
+  for (var i = 0; i < fs.length; i++) {
+    var f = fs[i], r = f.getBoundingClientRect();
+    out.push({u: f.src || f.getAttribute('data') || '', w: Math.round(r.width), h: Math.round(r.height)});
+  }
+  return JSON.stringify({vw: window.innerWidth, vh: window.innerHeight, frames: out});
+})()
+"""
+
+    /** Back to the phone layout. */
+    val MOBILE = """
+(function () {
+  var m = document.querySelector('meta[name=viewport]');
+  if (m) m.setAttribute('content', 'width=device-width, initial-scale=1');
+})()
+"""
+
     /** Lays the page out at a desktop width, like Chrome's Desktop site. */
     val DESKTOP = """
 (function () {

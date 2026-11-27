@@ -92,7 +92,7 @@ fun BuildScreen() {
     }
 
     LaunchedEffect(run.doneDeck) {
-        if (run.doneDeck.isNotEmpty()) {
+        if (run.doneDeck.isNotEmpty() && !run.upgrade) {
             val id = run.doneDeck
             BuildRunner.clear()
             Basket.clear()
@@ -113,7 +113,7 @@ fun BuildScreen() {
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            if (run.error.isNotEmpty()) {
+            if (run.error.isNotEmpty() && !run.upgrade) {
                 item {
                     InkCard(color = BadDeep, border = Bad.copy(alpha = 0.4f)) {
                         Text("Couldn't build it", color = Bad, fontWeight = FontWeight.Bold)

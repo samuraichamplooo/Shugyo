@@ -59,14 +59,14 @@ fun LearnScreen(deckId: String) {
                     Bar(if (deck.objectives.isEmpty()) 0f else learned.toFloat() / deck.objectives.size, LearnColor)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Each objective has plain-words notes, key terms, diagrams and a quick check. Pass the check to learn it (+25 XP).",
+                        "Each objective is a short lesson you tap through, step by step, with its key words and diagrams, then a quick check. Pass it to learn the objective (+25 XP).",
                         color = Faint, fontSize = 13.sp,
                     )
                 }
             }
             itemsIndexed(deck.objectives, key = { _, o -> o.id }) { i, o ->
                 val done = o.id in p.learned
-                InkCard(onClick = { Nav.go(Route.Lesson(deck.id, i)) }) {
+                InkCard(onClick = { Nav.go(Route.Player(deck.id, i)) }) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             Modifier
@@ -99,7 +99,7 @@ fun LearnScreen(deckId: String) {
             ) {
                 BigButton(
                     if (learned == 0) "Start with objective 1" else "Continue: objective ${next + 1}",
-                    { Nav.go(Route.Lesson(deck.id, next)) },
+                    { Nav.go(Route.Player(deck.id, next)) },
                     Modifier.fillMaxWidth(), color = LearnColor, textColor = Ink,
                 )
             }

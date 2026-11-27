@@ -77,7 +77,7 @@ fun HomeScreen(loaded: Boolean) {
 
             if (run.running) {
                 item {
-                    InkCard(onClick = { Nav.go(Route.Build) }, border = Gold.copy(alpha = 0.4f)) {
+                    InkCard(onClick = { if (!run.upgrade) Nav.go(Route.Build) }, border = Gold.copy(alpha = 0.4f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(Modifier.padding(end = 14.dp), color = Gold)
                             Column {
@@ -93,21 +93,25 @@ fun HomeScreen(loaded: Boolean) {
                     InkCard(
                         onClick = {
                             val id = run.doneDeck
+                            val upgraded = run.upgrade
                             BuildRunner.clear()
-                            dev.shugyo.scan.Basket.clear()
+                            if (!upgraded) dev.shugyo.scan.Basket.clear()
                             Nav.go(Route.DeckHome(id))
                         },
                         color = GoodDeep, border = Good.copy(alpha = 0.4f),
                     ) {
-                        Text("✨ Your new study set is ready", color = Good, fontWeight = FontWeight.Bold)
+                        Text(
+                            if (run.upgrade) "✨ Your study set has its lessons and new cards" else "✨ Your new study set is ready",
+                            color = Good, fontWeight = FontWeight.Bold,
+                        )
                         Text("Tap to open it.", color = Soft, fontSize = 14.sp)
                     }
                 }
             }
             if (run.error.isNotEmpty()) {
                 item {
-                    InkCard(onClick = { Nav.go(Route.Build) }, color = BadDeep, border = Bad.copy(alpha = 0.4f)) {
-                        Text("The last build didn't finish", color = Bad, fontWeight = FontWeight.Bold)
+                    InkCard(onClick = { if (!run.upgrade) Nav.go(Route.Build) else BuildRunner.clear() }, color = BadDeep, border = Bad.copy(alpha = 0.4f)) {
+                        Text(if (run.upgrade) "The upgrade didn't finish" else "The last build didn't finish", color = Bad, fontWeight = FontWeight.Bold)
                         Text(run.error, color = Soft, fontSize = 14.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
                     }
                 }

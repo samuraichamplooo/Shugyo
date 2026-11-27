@@ -112,6 +112,9 @@ class Tab(val webView: WebView, val scanner: WebScanner) {
     var progress by mutableIntStateOf(100)
     var canGoBack by mutableStateOf(false)
 
+    /** An embedded page (like a textbook shown in a box inside Moodle) that can open full screen. */
+    var embedded by mutableStateOf("")
+
     /** Errors the page ran into, to see why something didn't load. */
     val problems = mutableStateListOf<String>()
 
@@ -131,7 +134,11 @@ data class PageLink(val text: String, val url: String, val menu: Boolean)
 class BrowserState(val activity: Activity) {
     val tabs = mutableStateListOf<Tab>()
     var index by mutableIntStateOf(0)
-    var desktop by mutableStateOf(Prefs.current.desktopSite)
+    /** Sites shown with their desktop layout (only those: a textbook reader stays in phone layout). */
+    private fun desktopHosts(): Set<String> =
+        Prefs.current.desktopHosts.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+
+    fun isDesktop(url: String): Boolean = Link("", url).host.let { it.isNotEmpty() && it in desktopHosts() }
     var showStart by mutableStateOf(false)
     var fileRequest by mutableStateOf<Intent?>(null)
     var fileCallback: ValueCallback<Array<Uri>>? = null
@@ -176,7 +183,7 @@ class BrowserState(val activity: Activity) {
             setSupportMultipleWindows(true)
         }
         if (mobileAgent.isEmpty()) mobileAgent = w.settings.userAgentString
-        if (desktop) w.settings.userAgentString = DESKTOP_UA
+
         // Don't announce the app on every request; some sites treat that as a background request.
         if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
             try {
@@ -194,6 +201,7 @@ class BrowserState(val activity: Activity) {
         w.webViewClient = object : WebViewClient() {
             override fun onPageStarted(v: WebView, u: String, favicon: Bitmap?) {
                 sc.pageStarted()
+                tab.embedded = ""
                 tab.url = u
                 tab.canGoBack = v.canGoBack()
             }
@@ -203,7 +211,9 @@ class BrowserState(val activity: Activity) {
                 tab.canGoBack = v.canGoBack()
                 Links.visited(v.title.orEmpty(), u)
                 CookieManager.getInstance().flush()
-                if (desktop) v.evaluateJavascript(PageTools.DESKTOP, null)
+                if (isDesktop(u)) v.evaluateJavascript(PageTools.DESKTOP, null)
+                // Is the main content in a small box (like a textbook inside Moodle)? Offer it full screen.
+                v.postDelayed({ findEmbedded(tab, u) }, 1800)
             }
 
             override fun doUpdateVisitedHistory(v: WebView, u: String, isReload: Boolean) {
@@ -359,10 +369,63 @@ class BrowserState(val activity: Activity) {
     fun reload() = current.webView.reload()
 
     fun toggleDesktop() {
-        desktop = !desktop
-        Prefs.update { it.copy(desktopSite = desktop) }
-        tabs.forEach { it.webView.settings.userAgentString = if (desktop) DESKTOP_UA else mobileAgent }
-        current.webView.reload()
+        val tab = current
+        val host = Link("", tab.url).host
+        if (host.isEmpty()) return
+        val on = !isDesktop(tab.url)
+        Prefs.update { s ->
+            val set = s.desktopHosts.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toMutableSet()
+            if (on) set.add(host) else set.remove(host)
+            s.copy(desktopHosts = set.joinToString(","))
+        }
+        tab.webView.settings.userAgentString = mobileAgent
+        tab.webView.evaluateJavascript(if (on) PageTools.DESKTOP else PageTools.MOBILE, null)
+    }
+
+    private fun findEmbedded(tab: Tab, pageUrl: String) {
+        if (!tabs.contains(tab) || tab.url != pageUrl) return
+        tab.webView.evaluateJavascript(PageTools.FRAMES) { raw ->
+            val json = try {
+                JSONObject(JSONArray("[" + raw + "]").getString(0))
+            } catch (e: Exception) {
+                return@evaluateJavascript
+            }
+            val vw = json.optInt("vw").coerceAtLeast(1)
+            val vh = json.optInt("vh").coerceAtLeast(1)
+            val frames = json.optJSONArray("frames") ?: return@evaluateJavascript
+            var best = ""
+            var bestArea = 0
+            for (i in 0 until frames.length()) {
+                val f = frames.optJSONObject(i) ?: continue
+                val u = f.optString("u")
+                val w = f.optInt("w")
+                val h = f.optInt("h")
+                if (!u.startsWith("http") || u == pageUrl) continue
+                if (w < vw * 0.5 || w * h < vw * vh * 0.2) continue
+                if (w * h > bestArea) {
+                    best = u
+                    bestArea = w * h
+                }
+            }
+            if (tab.url == pageUrl) tab.embedded = best
+        }
+    }
+
+    /** Opens a page in a new tab (filling the screen). */
+    fun openInNewTab(url: String) {
+        val child = newTab()
+        val cur = current.webView
+        if (cur.width > 0 && cur.height > 0) {
+            child.webView.measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(cur.width, android.view.View.MeasureSpec.EXACTLY),
+                android.view.View.MeasureSpec.makeMeasureSpec(cur.height, android.view.View.MeasureSpec.EXACTLY),
+            )
+            child.webView.layout(0, 0, cur.width, cur.height)
+        }
+        tabs.add(child)
+        index = tabs.size - 1
+        showStart = false
+        child.webView.loadUrl(url)
     }
 
     /** Runs a script in the page you're looking at and returns its answer as text. */
@@ -575,7 +638,7 @@ fun BrowserScreen(state: BrowserState) {
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text(if (state.desktop) "📱  Mobile site" else "🖥  Desktop site (full menus)") },
+                        text = { Text(if (state.isDesktop(tab.url)) "📱  Phone layout for this site" else "🖥  Desktop layout for this site (full menus)") },
                         onClick = {
                             menu = false
                             state.toggleDesktop()
@@ -669,6 +732,32 @@ fun BrowserScreen(state: BrowserState) {
                 ) {
                     Text(busy.ifEmpty { message }, color = Paper, fontSize = 14.sp)
                 }
+            }
+        }
+
+        // The page shows its main content (like the textbook) in a small box: offer it full screen.
+        if (tab.embedded.isNotEmpty() && !state.showStart) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .background(CardHigh)
+                    .clickable { state.openInNewTab(tab.embedded) }
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("⛶", color = Gold, fontSize = 18.sp)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Open the embedded page full screen", color = Paper, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    Text("For a book that only fills part of the page", color = Faint, fontSize = 12.sp)
+                }
+                Text(
+                    "✕", color = Faint, fontSize = 14.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .clickable { tab.embedded = "" }
+                        .padding(8.dp),
+                )
             }
         }
 

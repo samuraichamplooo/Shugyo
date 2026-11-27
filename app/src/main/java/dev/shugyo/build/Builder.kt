@@ -5,7 +5,9 @@ import android.util.Log
 import dev.shugyo.ai.Ai
 import dev.shugyo.ai.AiException
 import dev.shugyo.ai.AiImage
+import dev.shugyo.data.Beat
 import dev.shugyo.data.Deck
+import dev.shugyo.data.FactCard
 import dev.shugyo.data.Figure
 import dev.shugyo.data.Objective
 import dev.shugyo.data.Prefs
@@ -41,6 +43,8 @@ object Builder {
     private const val CHUNK_CHARS = 38_000
     private const val SNAPS_PER_CALL = 8
     private const val IMAGES_PER_CALL = 12
+    /** Objectives per lessons or questions request: small enough to answer quickly and completely. */
+    private const val BATCH = 4
 
     private class Part(val text: String, val images: List<PageImage>, val snaps: List<BasketItem.Snap>)
 
@@ -59,9 +63,10 @@ object Builder {
         val parts = plan(pages, snaps, allImages)
         if (parts.isEmpty()) throw AiException("There's nothing to build from yet. Scan a page first.")
 
-        // Two steps per part (notes, then questions). Each finished step is saved, so if the build
-        // stops (no internet, busy servers) the next try picks up where it left off.
-        val steps = parts.size * 2
+        // Per part: notes, then lessons and fact cards, then questions, a few objectives at a time.
+        // Each finished step is saved, so if the build stops (no internet, busy servers) the next try
+        // picks up where it left off.
+        var steps = parts.size * 3
         var stepsDone = 0
         val used = ArrayList<File>()
         val results = ArrayList<JSONObject>()
@@ -72,19 +77,18 @@ object Builder {
             val share = 1f / parts.size
             val partName = if (parts.size > 1) "part ${i + 1} of ${parts.size}" else "your pages"
 
-            // Step 1: notes, from the text and pictures.
+            // Notes, from the text and pictures.
             onUpdate("Reading $partName…", base + share * 0.02f)
             val images = part.images.mapNotNull { img -> Images.forAi(img.file)?.let { AiImage(img.id, it) } } +
                 part.snaps.mapNotNull { s -> Images.forAi(s.file, 2000)?.let { AiImage(s.label, it) } }
-            val notesSystem = Prompts.notes()
             val notesUser = Prompts.buildUser(part.text, part.snaps.map { it.label }, i + 1, parts.size, titleHint, subjectHint)
             val notes = try {
                 step(
-                    "n", notesSystem, notesUser, images, 24_000, cancelled, used,
+                    "n", Prompts.notes(), notesUser, images, 32_000, cancelled, used,
                     onStatus = { onUpdate(it, base + share * 0.05f) },
                     onChars = { chars ->
-                        val f = min(0.97f, chars / 16_000f)
-                        onUpdate(writingLine(chars, partName, false), base + share * (0.05f + 0.5f * f))
+                        val f = min(0.97f, chars / 20_000f)
+                        onUpdate(writingLine(chars, partName, 0), base + share * (0.05f + 0.3f * f))
                     },
                 )
             } catch (e: CancellationException) {
@@ -95,30 +99,65 @@ object Builder {
             stepsDone++
             if (notes == null) {
                 // Garbled twice: skip this part rather than getting stuck on it.
-                stepsDone++
+                stepsDone += 2
                 continue
             }
+            val compact = compactNotes(notes)
+            val objIds = objects(notes.optJSONArray("objectives")).map { it.str("id") }.filter { it.isNotBlank() }
+            val batches = objIds.chunked(BATCH).ifEmpty { listOf(emptyList()) }
+            steps += 2 * batches.size - 2
 
-            // Step 2: questions, from the notes and the text (no pictures needed, so it's quicker).
-            onUpdate("Writing practice questions for $partName…", base + share * 0.57f)
-            val questions = try {
-                step(
-                    "q", Prompts.questions(perObjective),
-                    Prompts.questionsUser(compactNotes(notes), part.text, i + 1, parts.size),
-                    emptyList(), 16_000, cancelled, used,
-                    onStatus = { onUpdate(it, base + share * 0.6f) },
-                    onChars = { chars ->
-                        val f = min(0.97f, chars / 12_000f)
-                        onUpdate(writingLine(chars, partName, true), base + share * (0.6f + 0.38f * f))
-                    },
-                )
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                throw stopped(e, stepsDone, steps)
+            // Lessons and fact cards.
+            val lessons = org.json.JSONArray()
+            for ((b, batch) in batches.withIndex()) {
+                if (batch.isEmpty()) break
+                val from = base + share * (0.36f + 0.32f * b / batches.size)
+                val span = share * 0.32f / batches.size
+                onUpdate("Writing lessons for $partName (${b + 1} of ${batches.size})…", from)
+                val got = try {
+                    step(
+                        "l", Prompts.lessons(), Prompts.lessonsUser(compact, part.text, i + 1, parts.size, batch),
+                        emptyList(), 24_000, cancelled, used,
+                        onStatus = { onUpdate(it, from) },
+                        onChars = { chars ->
+                            onUpdate(writingLine(chars, partName, 1), from + span * min(0.97f, chars / 14_000f))
+                        },
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    throw stopped(e, stepsDone, steps)
+                }
+                stepsDone++
+                objects(got?.optJSONArray("lessons")).forEach { lessons.put(it) }
             }
-            stepsDone++
-            notes.put("questions", questions?.optJSONArray("questions") ?: org.json.JSONArray())
+
+            // Questions.
+            val questions = org.json.JSONArray()
+            for ((b, batch) in batches.withIndex()) {
+                val from = base + share * (0.68f + 0.31f * b / batches.size)
+                val span = share * 0.31f / batches.size
+                onUpdate("Writing practice questions for $partName (${b + 1} of ${batches.size})…", from)
+                val got = try {
+                    step(
+                        "q", Prompts.questions(perObjective),
+                        Prompts.questionsUser(compact, part.text, i + 1, parts.size, batch),
+                        emptyList(), 20_000, cancelled, used,
+                        onStatus = { onUpdate(it, from) },
+                        onChars = { chars ->
+                            onUpdate(writingLine(chars, partName, 2), from + span * min(0.97f, chars / 12_000f))
+                        },
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    throw stopped(e, stepsDone, steps)
+                }
+                stepsDone++
+                objects(got?.optJSONArray("questions")).forEach { questions.put(it) }
+            }
+            notes.put("lessons", lessons)
+            notes.put("questions", questions)
             results.add(notes)
         }
         if (results.isEmpty()) throw AiException("The AI's answers couldn't be read. Try building again.")
@@ -130,9 +169,149 @@ object Builder {
         val fresh = merge(id, results, pages, snaps, allImages, titleHint, subjectHint, prefix)
         val deck = if (existing != null) append(existing, fresh) else fresh
         Store.save(deck)
+        // Keep the reading itself, so the set can be improved later without scanning again.
+        try {
+            val text = parts.joinToString("\n\n") { it.text }.trim()
+            if (text.isNotEmpty()) java.io.FileOutputStream(File(Store.dir(id), "source.txt"), existing != null).use {
+                it.write(("\n\n" + text).toByteArray())
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "couldn't keep the source text", e)
+        }
         used.forEach { it.delete() }
         onUpdate("Done!", 1f)
         deck
+    }
+
+    /**
+     * Fills out a set built earlier: a step-by-step lesson and fact flashcards for every objective that
+     * doesn't have them yet, and more practice questions where there are few. Uses the saved reading when
+     * there is one, otherwise the set's own notes.
+     */
+    suspend fun upgrade(
+        deckId: String,
+        onUpdate: (status: String, fraction: Float) -> Unit,
+        cancelled: () -> Boolean,
+    ): Deck = withContext(Dispatchers.IO) {
+        val deck = Store.deck(deckId) ?: throw AiException("That study set is gone.")
+        val perObjective = Prefs.current.questionsPerObjective
+        val srcFile = File(Store.dir(deckId), "source.txt")
+        val source = if (srcFile.exists()) srcFile.readText().trim() else ""
+        val text = if (source.isNotEmpty() && source.length <= 60_000) source else deckText(deck)
+        val compact = compactDeck(deck)
+        val needLessons = deck.objectives.filter { it.lesson.isEmpty() }.map { it.id }.chunked(BATCH)
+        val needQuestions = deck.objectives.filter { deck.questionsFor(it).size < perObjective }.map { it.id }.chunked(BATCH)
+        val total = (needLessons.size + needQuestions.size).coerceAtLeast(1)
+        if (needLessons.isEmpty() && needQuestions.isEmpty()) return@withContext deck
+        var done = 0
+        val used = ArrayList<File>()
+        val lessons = ArrayList<JSONObject>()
+        val newQuestions = ArrayList<JSONObject>()
+        try {
+            for ((b, batch) in needLessons.withIndex()) {
+                val from = done.toFloat() / total
+                onUpdate("Writing lessons (${b + 1} of ${needLessons.size})…", from)
+                val got = step(
+                    "l", Prompts.lessons(), Prompts.lessonsUser(compact, text, 1, 1, batch),
+                    emptyList(), 24_000, cancelled, used,
+                    onStatus = { onUpdate(it, from) },
+                    onChars = { chars ->
+                        onUpdate(writingLine(chars, "your set", 1), from + min(0.97f, chars / 14_000f) / total)
+                    },
+                )
+                lessons.addAll(objects(got?.optJSONArray("lessons")))
+                done++
+            }
+            for ((b, batch) in needQuestions.withIndex()) {
+                val from = done.toFloat() / total
+                onUpdate("Writing more practice questions (${b + 1} of ${needQuestions.size})…", from)
+                val already = deck.questions.filter { it.objective in batch }.map { it.prompt.take(140) }
+                val got = step(
+                    "q", Prompts.questions(perObjective), Prompts.questionsUser(compact, text, 1, 1, batch, already),
+                    emptyList(), 20_000, cancelled, used,
+                    onStatus = { onUpdate(it, from) },
+                    onChars = { chars ->
+                        onUpdate(writingLine(chars, "your set", 2), from + min(0.97f, chars / 12_000f) / total)
+                    },
+                )
+                newQuestions.addAll(objects(got?.optJSONArray("questions")))
+                done++
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw stopped(e, done, total)
+        }
+
+        onUpdate("Saving your study set…", 0.98f)
+        val tag = "u" + System.currentTimeMillis().toString(36).takeLast(5) + "_"
+        val validTerm = deck.terms.map { it.id }.toSet()
+        val validFigure = deck.figures.map { it.id }.toSet()
+        val keep: (String) -> String = { it }
+        val byObjective = lessons.associateBy { it.str("objective") }
+        val objectives = deck.objectives.map { o ->
+            val l = byObjective[o.id] ?: return@map o
+            if (o.lesson.isNotEmpty()) return@map o
+            val steps = beats(l, keep).map { b ->
+                b.copy(terms = b.terms.filter { it in validTerm }, figure = b.figure.takeIf { it in validFigure }.orEmpty())
+            }
+            o.copy(lesson = steps, recap = l.str("recap"))
+        }
+        val cards = ArrayList<FactCard>()
+        for (l in lessons) {
+            val oid = l.str("objective")
+            for (c in objects(l.optJSONArray("cards"))) {
+                if (c.str("front").isBlank() || c.str("back").isBlank()) continue
+                cards.add(FactCard("$tag" + "c${cards.size + 1}", c.str("front"), c.str("back"), oid))
+            }
+        }
+        val questions = newQuestions.mapIndexedNotNull { i, q -> clean(q, "${tag}q${i + 1}", keep) }
+        val updated = deck.copy(objectives = objectives, cards = deck.cards + cards, questions = deck.questions + questions)
+        Store.save(updated)
+        used.forEach { it.delete() }
+        onUpdate("Done!", 1f)
+        updated
+    }
+
+    /** A set's notes as plain text, for improving a set whose reading wasn't kept. */
+    private fun deckText(d: Deck): String {
+        val sb = StringBuilder()
+        sb.append(d.title).append('\n').append(d.overview).append("\n\n")
+        for (s in d.sections) {
+            sb.append("## ").append(s.title).append('\n').append(s.summary).append('\n')
+            s.points.forEach { sb.append("- ").append(it).append('\n') }
+            sb.append('\n')
+        }
+        for (o in d.objectives) sb.append("Objective: ").append(o.text).append("\n").append(o.explain).append("\n\n")
+        for (t in d.terms) {
+            sb.append("**").append(t.term).append("**: ").append(t.definition)
+            if (t.example.isNotBlank()) sb.append(" Example: ").append(t.example)
+            sb.append('\n')
+        }
+        for (tb in d.tables) {
+            sb.append("\nTABLE: ").append(tb.title).append('\n').append("| ").append(tb.headers.joinToString(" | ")).append(" |\n")
+            tb.rows.forEach { sb.append("| ").append(it.joinToString(" | ")).append(" |\n") }
+        }
+        for (f in d.figures) sb.append("\nFIGURE ").append(f.id).append(": ").append(f.caption).append(" — ").append(f.explain).append('\n')
+        return sb.toString()
+    }
+
+    /** The set's notes in the same shape the AI got while building, with the set's own ids. */
+    private fun compactDeck(d: Deck): String {
+        val o = JSONObject()
+        o.put("objectives", org.json.JSONArray(d.objectives.map {
+            JSONObject().put("id", it.id).put("text", it.text).put("explain", it.explain)
+        }))
+        o.put("terms", org.json.JSONArray(d.terms.map {
+            JSONObject().put("id", it.id).put("term", it.term).put("definition", it.definition).put("objective", it.objective)
+        }))
+        o.put("tables", org.json.JSONArray(d.tables.map {
+            JSONObject().put("id", it.id).put("title", it.title).put("objective", it.objective)
+        }))
+        o.put("figures", org.json.JSONArray(d.figures.map {
+            JSONObject().put("id", it.id).put("caption", it.caption).put("explain", it.explain).put("objective", it.objective)
+        }))
+        return o.toString()
     }
 
     /** Saved answers of finished steps, kept until the set is built. */
@@ -210,29 +389,40 @@ object Builder {
                 .put("objective", it.str("objective"))
         }))
         o.put("tables", org.json.JSONArray(objects(notes.optJSONArray("tables")).map {
-            JSONObject().put("title", it.str("title")).put("headers", it.optJSONArray("headers")).put("rows", it.optJSONArray("rows"))
+            JSONObject().put("id", it.str("id")).put("title", it.str("title")).put("headers", it.optJSONArray("headers"))
+                .put("rows", it.optJSONArray("rows")).put("objective", it.str("objective"))
         }))
         o.put("figures", org.json.JSONArray(objects(notes.optJSONArray("figures")).map {
-            JSONObject().put("caption", it.str("caption")).put("explain", it.str("explain"))
+            JSONObject().put("id", it.str("id")).put("caption", it.str("caption")).put("explain", it.str("explain"))
+                .put("objective", it.str("objective"))
         }))
         return o.toString()
     }
 
-    private fun writingLine(chars: Int, partName: String, questions: Boolean): String {
-        val lines = if (questions) listOf(
-            "Writing practice questions",
-            "Making believable wrong answers",
-            "Adding hints",
-            "Writing scenario questions",
-            "Sharpening the tricky answers",
-        ) else listOf(
-            "Finding the learning objectives",
-            "Pulling out key terms",
-            "Making hard ideas simple",
-            "Inventing memory tricks",
-            "Copying the tables",
-            "Studying the diagrams",
-        )
+    private fun writingLine(chars: Int, partName: String, stage: Int): String {
+        val lines = when (stage) {
+            2 -> listOf(
+                "Writing practice questions",
+                "Making believable wrong answers",
+                "Adding hints",
+                "Writing scenario questions",
+                "Sharpening the tricky answers",
+            )
+            1 -> listOf(
+                "Planning the lessons",
+                "Making hard ideas simple",
+                "Finding everyday analogies",
+                "Writing step by step",
+                "Making flashcards",
+            )
+            else -> listOf(
+                "Finding the learning objectives",
+                "Pulling out key terms",
+                "Inventing memory tricks",
+                "Copying the tables",
+                "Studying the diagrams",
+            )
+        }
         val step = (chars / 3000).coerceIn(0, lines.size - 1)
         val k = chars / 1000
         return "${lines[step]}… ($partName · ${k}k characters)"
@@ -297,6 +487,7 @@ object Builder {
         val tables = ArrayList<TableBlock>()
         val figures = ArrayList<Figure>()
         val questions = ArrayList<Question>()
+        val cards = ArrayList<FactCard>()
         val termByName = HashMap<String, String>()
         val snapByLabel = snaps.associateBy { it.label }
         val snapBitmaps = HashMap<String, Bitmap?>()
@@ -330,15 +521,30 @@ object Builder {
                 val t = s.str("title")
                 if (t.isNotBlank() || s.str("summary").isNotBlank()) sections.add(Section(t, s.str("summary"), s.strList("points")))
             }
+            val lessonFor = objects(o.optJSONArray("lessons")).associateBy { it.str("objective") }
             objs.forEachIndexed { i, it ->
                 val text = it.str("text")
                 if (text.isBlank()) return@forEachIndexed
+                val lesson = lessonFor[it.str("id")]
                 objectives.add(
                     Objective(
                         id(it.str("id"), "o", i + 1), text, it.str("simple"), it.str("explain"),
                         it.strList("terms").map { t -> ref(t) },
+                        lesson = beats(lesson, ::ref),
+                        recap = lesson?.str("recap").orEmpty(),
                     )
                 )
+            }
+            var cardNo = 0
+            for (l in objects(o.optJSONArray("lessons"))) {
+                val oid = ref(l.str("objective"))
+                for (c in objects(l.optJSONArray("cards"))) {
+                    val front = c.str("front")
+                    val back = c.str("back")
+                    if (front.isBlank() || back.isBlank()) continue
+                    cardNo++
+                    cards.add(FactCard("${prefix}c$cardNo", front, back, oid))
+                }
             }
             ts.forEachIndexed { i, t ->
                 val name = t.str("term")
@@ -427,8 +633,17 @@ object Builder {
             tables = unique(tables, { it.id }) { t, id -> t.copy(id = id) },
             figures = figures,
             questions = unique(fixedQuestions, { it.id }) { q, id -> q.copy(id = id) },
+            cards = unique(cards, { it.id }) { c, id -> c.copy(id = id) },
         )
     }
+
+    /** A lesson's steps as the AI wrote them, with ids mapped to the set's own. */
+    private fun beats(lesson: JSONObject?, ref: (String) -> String): List<Beat> =
+        objects(lesson?.optJSONArray("steps")).mapNotNull { b ->
+            val text = b.str("text")
+            if (text.isBlank()) null
+            else Beat(b.str("title"), text, b.strList("terms").map { ref(it) }, b.str("figure").let { if (it.isBlank()) "" else ref(it) })
+        }
 
     /** A new part of a chapter added to a set you already have. Terms it already has aren't repeated. */
     private fun append(old: Deck, add: Deck): Deck {
@@ -449,6 +664,7 @@ object Builder {
             tables = old.tables + add.tables,
             figures = old.figures + add.figures,
             questions = old.questions + add.questions.map { q -> q.copy(term = tid(q.term)) },
+            cards = old.cards + add.cards,
         )
     }
 

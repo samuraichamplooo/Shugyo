@@ -56,6 +56,8 @@ object BuildRunner {
         val fraction: Float = 0f,
         val error: String = "",
         val doneDeck: String = "",
+        /** The finished job improved an existing set (nothing was built from the basket). */
+        val upgrade: Boolean = false,
     )
 
     private val _state = MutableStateFlow(State())
@@ -87,6 +89,27 @@ object BuildRunner {
                 _state.value = State()
             } catch (e: Exception) {
                 _state.value = State(error = e.message ?: "Something went wrong while building. Try again.")
+            }
+        }
+    }
+
+    /** Adds lessons, fact cards and questions to a set built earlier. */
+    fun upgrade(context: android.content.Context, deckId: String) {
+        if (_state.value.running) return
+        _state.value = State(running = true, status = "Getting ready…", fraction = 0.01f)
+        dev.shugyo.BuildService.start(context)
+        job = scope.launch {
+            try {
+                val deck = Builder.upgrade(
+                    deckId,
+                    onUpdate = { s, f -> if (_state.value.running) _state.value = _state.value.copy(status = s, fraction = f) },
+                    cancelled = { job?.isCancelled == true },
+                )
+                _state.value = State(doneDeck = deck.id, upgrade = true)
+            } catch (e: CancellationException) {
+                _state.value = State()
+            } catch (e: Exception) {
+                _state.value = State(error = e.message ?: "Something went wrong. Try again.", upgrade = true)
             }
         }
     }
@@ -131,6 +154,7 @@ fun Root(activity: Activity) {
                 is Route.DeckHome -> DeckScreen(route.deckId)
                 is Route.Learn -> LearnScreen(route.deckId)
                 is Route.Lesson -> LessonScreen(route.deckId, route.index)
+                is Route.Player -> LessonPlayer(route.deckId, route.index)
                 is Route.Cards -> FlashcardsScreen(route.deckId, route.all, route.starred)
                 is Route.Quiz -> QuizScreen(route.deckId, route.objectiveId, route.missedOnly)
                 is Route.Notes -> NotesScreen(route.deckId, route.tab)

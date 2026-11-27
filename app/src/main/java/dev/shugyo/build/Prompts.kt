@@ -23,7 +23,7 @@ Reply with ONE JSON object only, no markdown, in exactly this shape:
 How to fill it in:
 - Stay true to the book. Facts and definitions come from these pages. The plain-words versions, analogies, mnemonics and examples are yours, and they must be accurate.
 - objectives: copy the book's own learning objectives or outcomes word for word when the pages have them (often a numbered list near the start of a chapter or section, like "21.1a Describe…"). If there are none, write 4–10 from the main headings, each starting with an action verb. "simple" says what the objective is asking, in everyday words. "explain" teaches it in 3–6 short, friendly sentences with an everyday analogy. "terms" lists the ids of the key terms it needs.
-- terms: every bolded or glossary term and every other important concept. "definition" is the book's meaning, short and faithful. When the pages end with a GLOSSARY of the book's own pop-up definitions, use those for those terms (word for word when short). "simple" explains it so a 12-year-old would get it. "mnemonic" is a short, catchy memory trick (acronym, rhyme, word link or vivid picture). "example" is an everyday or clinical example. Link each term to its objective.
+- terms: every bolded or glossary term, plus every other concept, process, structure, cell or molecule type, disease, test or named thing a quiz could ask about. Usually 3–6 per objective: don't stop early, a full chapter often has 60 or more. "definition" is the book's meaning, short and faithful. When the pages end with a GLOSSARY of the book's own pop-up definitions, use those for those terms (word for word when short). "simple" explains it so a 12-year-old would get it. "mnemonic" is a short, catchy memory trick (acronym, rhyme, word link or vivid picture). "example" is an everyday or clinical example. Link each term to its objective.
 - tables: reproduce each table that teaches something, faithfully, with its headers and rows. "takeaway" is the one thing to remember from it.
 - figures: one for every diagram, chart, labeled drawing or teaching photo. Skip logos, icons, decorative photos and author photos. "src" names the image it comes from (imgN or snapN). For a figure inside a page image (snapN), "box" goes tightly around just that figure and its labels as [ymin, xmin, ymax, xmax] on a 0–1000 scale. Leave "box" out for imgN pictures. "explain" says in plain words what it shows and how to read it. "labels" lists its labeled parts, if any.
 - Language: warm, clear and a little fun. Short sentences. No filler.
@@ -39,7 +39,8 @@ Reply with ONE JSON object only, no markdown, in exactly this shape:
 {"questions": [{"type": "mc", "prompt": "", "choices": ["", "", "", ""], "answer": [0], "hint": "", "explain": "", "objective": "o1", "term": "t1", "level": 1}]}
 
 How to write them:
-- About $perObjective per objective, covering most key terms. Use the objective and term ids from the notes exactly.
+- Exactly $perObjective for EACH objective listed under "WRITE FOR", covering its key terms. Use the objective and term ids from the notes exactly.
+- If "ALREADY HAVE" lists questions, write different ones (other facts, other angles).
 - Mix the types: "mc" has 4 choices with exactly one right; "sata" has 5 choices with 2–4 right and the prompt ends with "Select all that apply."; "tf" has choices exactly ["True", "False"].
 - "answer" lists the 0-based positions of the right choices. Spread the right answers across positions.
 - Wrong choices must be believable (common mix-ups, not jokes).
@@ -49,12 +50,47 @@ How to write them:
 - Keep the JSON valid and escape quotes inside strings.
 """.trim()
 
-    fun questionsUser(notes: String, text: String, part: Int, parts: Int): String {
+    fun questionsUser(
+        notes: String,
+        text: String,
+        part: Int,
+        parts: Int,
+        writeFor: List<String> = emptyList(),
+        already: List<String> = emptyList(),
+    ): String {
         val sb = StringBuilder()
         if (parts > 1) sb.append("This is part $part of $parts of the same reading.\n")
+        if (writeFor.isNotEmpty()) sb.append("WRITE FOR: ").append(writeFor.joinToString(", ")).append('\n')
+        if (already.isNotEmpty()) sb.append("ALREADY HAVE:\n").append(already.joinToString("\n") { "- $it" }).append('\n')
         sb.append("NOTES:\n").append(notes)
         if (text.isNotBlank()) sb.append("\n\nPAGES:\n").append(text)
         sb.append("\n\nNow write the questions JSON.")
+        return sb.toString()
+    }
+
+    /** Step 2 of a build: a step-by-step lesson and fact flashcards for each objective. */
+    fun lessons(): String = """
+You are Shugyō, a warm, upbeat tutor for ${Prefs.current.audience}. You teach a textbook reading one learning objective at a time, so that someone who struggles with it can finally get it, and enjoy it.
+You get study notes (objectives, key terms, tables and figures with their ids) and the textbook pages.
+
+Reply with ONE JSON object only, no markdown, in exactly this shape:
+{"lessons": [{"objective": "o1", "steps": [{"title": "", "text": "", "terms": ["t1"], "figure": "f1"}], "recap": "", "cards": [{"front": "", "back": ""}]}]}
+
+For EACH objective listed under "WRITE FOR":
+- "steps": a lesson of 4–8 short steps that teaches EVERYTHING the pages say for that objective, in a sensible order: start from what the reader already knows, build up one idea per step, and end with how it all fits together. Each "text" is 2–5 short sentences in plain words, with one everyday analogy, picture-in-your-head or real-life (clinical when it fits) example somewhere in the lesson. Mark key words with **bold**. "title" is a short, friendly heading. "terms" lists the ids of key terms the step uses; "figure" is the id of a figure that helps with this step, or "".
+- "recap": 1–2 sentences: the one thing to remember.
+- "cards": 5–10 flashcards for the facts of this objective that are NOT just "define this term" (those exist already): how things work, causes and effects, compare/contrast, steps in order, numbers, locations, functions, examples. "front" is a short question; "back" is a short, complete answer.
+- Stay true to the book: facts come from the notes and pages. The analogies and examples are yours, and must be accurate.
+- Use the ids from the notes exactly. Keep the JSON valid and escape quotes inside strings.
+""".trim()
+
+    fun lessonsUser(notes: String, text: String, part: Int, parts: Int, writeFor: List<String>): String {
+        val sb = StringBuilder()
+        if (parts > 1) sb.append("This is part $part of $parts of the same reading.\n")
+        sb.append("WRITE FOR: ").append(writeFor.joinToString(", ")).append('\n')
+        sb.append("NOTES:\n").append(notes)
+        if (text.isNotBlank()) sb.append("\n\nPAGES:\n").append(text)
+        sb.append("\n\nNow write the lessons JSON.")
         return sb.toString()
     }
 
