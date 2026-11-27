@@ -37,6 +37,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -52,6 +54,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -79,6 +82,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.doOnLayout
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewFeature
 import dev.shugyo.data.Link
@@ -86,12 +90,17 @@ import dev.shugyo.data.Links
 import dev.shugyo.data.Prefs
 import dev.shugyo.scan.Basket
 import dev.shugyo.scan.BasketItem
+import dev.shugyo.scan.PageTools
 import dev.shugyo.scan.WebScanner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.net.URLEncoder
+import kotlin.coroutines.resume
 
 private const val DESKTOP_UA =
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -115,11 +124,14 @@ class Tab(val webView: WebView, val scanner: WebScanner) {
         get() = title.ifBlank { Link("", url).host.ifBlank { "New tab" } }
 }
 
+/** A link found on the page. [menu] means it sits in a menu or side panel. */
+data class PageLink(val text: String, val url: String, val menu: Boolean)
+
 /** The in-app browser. Kept alive while the app is open so your textbook stays where you left it. */
 class BrowserState(val activity: Activity) {
     val tabs = mutableStateListOf<Tab>()
     var index by mutableIntStateOf(0)
-    var desktop by mutableStateOf(false)
+    var desktop by mutableStateOf(Prefs.current.desktopSite)
     var showStart by mutableStateOf(false)
     var fileRequest by mutableStateOf<Intent?>(null)
     var fileCallback: ValueCallback<Array<Uri>>? = null
@@ -137,7 +149,12 @@ class BrowserState(val activity: Activity) {
         if (started) return
         started = true
         val u = Prefs.current.lastUrl
-        if (u.isBlank()) showStart = true else current.webView.loadUrl(u)
+        if (u.isBlank()) {
+            showStart = true
+            return
+        }
+        // Wait until the browser has its real size: some sites measure the screen once, as they load.
+        current.webView.doOnLayout { (it as WebView).loadUrl(u) }
     }
 
     @SuppressLint("SetJavaScriptEnabled", "RequiresFeature")
@@ -186,6 +203,7 @@ class BrowserState(val activity: Activity) {
                 tab.canGoBack = v.canGoBack()
                 Links.visited(v.title.orEmpty(), u)
                 CookieManager.getInstance().flush()
+                if (desktop) v.evaluateJavascript(PageTools.DESKTOP, null)
             }
 
             override fun doUpdateVisitedHistory(v: WebView, u: String, isReload: Boolean) {
@@ -231,6 +249,15 @@ class BrowserState(val activity: Activity) {
             override fun onCreateWindow(v: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message): Boolean {
                 val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
                 val child = newTab()
+                // Give the new tab the screen's size before it starts loading, so the page lays out right.
+                val cur = current.webView
+                if (cur.width > 0 && cur.height > 0) {
+                    child.webView.measure(
+                        android.view.View.MeasureSpec.makeMeasureSpec(cur.width, android.view.View.MeasureSpec.EXACTLY),
+                        android.view.View.MeasureSpec.makeMeasureSpec(cur.height, android.view.View.MeasureSpec.EXACTLY),
+                    )
+                    child.webView.layout(0, 0, cur.width, cur.height)
+                }
                 tabs.add(child)
                 index = tabs.size - 1
                 showStart = false
@@ -333,8 +360,43 @@ class BrowserState(val activity: Activity) {
 
     fun toggleDesktop() {
         desktop = !desktop
+        Prefs.update { it.copy(desktopSite = desktop) }
         tabs.forEach { it.webView.settings.userAgentString = if (desktop) DESKTOP_UA else mobileAgent }
         current.webView.reload()
+    }
+
+    /** Runs a script in the page you're looking at and returns its answer as text. */
+    suspend fun runScript(js: String): String? = suspendCancellableCoroutine { cont ->
+        current.webView.evaluateJavascript(js) { raw ->
+            val text = try {
+                if (raw == null || raw == "null") null else JSONArray("[" + raw + "]").getString(0)
+            } catch (e: Exception) {
+                null
+            }
+            cont.resume(text)
+        }
+    }
+
+    suspend fun links(): List<PageLink> {
+        val json = runScript(PageTools.LINKS) ?: return emptyList()
+        return try {
+            val a = JSONArray(json)
+            (0 until a.length()).mapNotNull { i ->
+                a.optJSONObject(i)?.let { PageLink(it.optString("t"), it.optString("u"), it.optBoolean("m")) }
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    suspend fun check(): List<String> {
+        val json = runScript(PageTools.CHECK) ?: return listOf("The page didn't answer.")
+        return try {
+            val o = JSONObject(json)
+            o.keys().asSequence().map { k -> "$k: ${o.opt(k)}" }.toList()
+        } catch (e: Exception) {
+            listOf(json.take(500))
+        }
     }
 
     fun destroy() {
@@ -358,6 +420,9 @@ fun BrowserScreen(state: BrowserState) {
     var field by remember { mutableStateOf("") }
     var menu by remember { mutableStateOf(false) }
     var problems by remember { mutableStateOf(false) }
+    var checkLines by remember { mutableStateOf<List<String>>(emptyList()) }
+    var linkList by remember { mutableStateOf<List<PageLink>?>(null) }
+    var linkSearch by remember { mutableStateOf("") }
     val incoming by Incoming.url
     val settings by Prefs.settings.collectAsState()
     val tab = state.current
@@ -453,6 +518,19 @@ fun BrowserScreen(state: BrowserState) {
                             },
                         )
                     }
+                    if (!state.showStart && tab.url.startsWith("http")) {
+                        DropdownMenuItem(
+                            text = { Text("🔗  All links on this page (menus too)") },
+                            onClick = {
+                                menu = false
+                                linkSearch = ""
+                                scope.launch {
+                                    val l = state.links()
+                                    if (l.isEmpty()) message = "No links found on this page." else linkList = l
+                                }
+                            },
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("🏠  Start page") },
                         onClick = {
@@ -489,7 +567,7 @@ fun BrowserScreen(state: BrowserState) {
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text(if (state.desktop) "📱  Mobile site" else "🖥  Desktop site") },
+                        text = { Text(if (state.desktop) "📱  Mobile site" else "🖥  Desktop site (full menus)") },
                         onClick = {
                             menu = false
                             state.toggleDesktop()
@@ -653,6 +731,17 @@ fun BrowserScreen(state: BrowserState) {
         }
     }
 
+    linkList?.let { l ->
+        LinksSheet(
+            l, linkSearch, { linkSearch = it },
+            onPick = {
+                linkList = null
+                state.load(it.url)
+            },
+            onDismiss = { linkList = null },
+        )
+    }
+
     if (problems) {
         AlertDialog(
             onDismissRequest = { problems = false },
@@ -666,6 +755,11 @@ fun BrowserScreen(state: BrowserState) {
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(tab.url.ifBlank { "No page open" }, color = Faint, fontSize = 12.sp)
+                    if (checkLines.isNotEmpty()) {
+                        Text("Page check", color = Gold, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        checkLines.forEach { Text(it, color = Soft, fontSize = 12.sp, lineHeight = 16.sp) }
+                        Spacer(Modifier.padding(top = 4.dp))
+                    }
                     if (tab.problems.isEmpty()) {
                         Text("No errors on this page so far.", color = Soft)
                     } else {
@@ -676,9 +770,55 @@ fun BrowserScreen(state: BrowserState) {
             },
             confirmButton = { TextButton(onClick = { problems = false }) { Text("Close", color = Gold) } },
             dismissButton = {
-                if (tab.problems.isNotEmpty()) TextButton(onClick = { tab.problems.clear() }) { Text("Clear", color = Faint) }
+                TextButton(onClick = { scope.launch { checkLines = state.check() } }) { Text("Run page check", color = Faint) }
             },
         )
+    }
+}
+
+@Composable
+private fun LinksSheet(links: List<PageLink>, search: String, onSearch: (String) -> Unit, onPick: (PageLink) -> Unit, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Card) {
+        val q = search.trim().lowercase()
+        val shown = links.filter { q.isEmpty() || it.text.lowercase().contains(q) || it.url.lowercase().contains(q) }
+        val menus = shown.filter { it.menu }
+        val rest = shown.filter { !it.menu }
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp),
+        ) {
+            Text("Links on this page", style = MaterialTheme.typography.titleLarge, color = Paper)
+            Text("Menus that won't open still have their links here. Look for your course or textbook.", color = Faint, fontSize = 13.sp)
+            Spacer(Modifier.padding(top = 8.dp))
+            OutlinedTextField(
+                search, onSearch, singleLine = true,
+                placeholder = { Text("Search, e.g. course, textbook, Connect") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            LazyColumn(Modifier.heightIn(max = 520.dp)) {
+                if (menus.isNotEmpty()) item { SectionLabel("From menus") }
+                items(menus, key = { "m" + it.url }) { l -> LinkItem(l, onPick) }
+                if (rest.isNotEmpty()) item { SectionLabel("On the page") }
+                items(rest, key = { "p" + it.url }) { l -> LinkItem(l, onPick) }
+                if (shown.isEmpty()) item { Text("Nothing matches.", color = Faint, modifier = Modifier.padding(16.dp)) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LinkItem(l: PageLink, onPick: (PageLink) -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable { onPick(l) }
+            .padding(horizontal = 8.dp, vertical = 10.dp),
+    ) {
+        Text(l.text, color = Paper, fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(Link("", l.url).host + Uri.parse(l.url).path.orEmpty(), color = Faint, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
