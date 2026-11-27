@@ -151,7 +151,7 @@ fun HomeScreen(loaded: Boolean) {
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text("Add pages", style = androidx.compose.material3.MaterialTheme.typography.titleLarge, color = Paper)
-                AddOption("🌐", "Open my textbook", "Sign in to McGraw Hill (or any site) and scan each page") {
+                AddOption("🌐", "Open my textbook", "Your class site (like Moodle) or McGraw Hill: sign in, then scan each page") {
                     adding = false
                     Nav.go(Route.Browser)
                 }

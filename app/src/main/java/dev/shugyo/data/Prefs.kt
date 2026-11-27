@@ -14,7 +14,9 @@ data class Settings(
     val audience: String = "a nursing student who wants hard ideas made simple and a little fun",
     val questionsPerObjective: Int = 4,
     val newCardsPerDay: Int = 25,
-    val lastUrl: String = "https://connect.mheducation.com",
+    val lastUrl: String = "",                // the in-app browser opens where you left off
+    val bookmarks: String = "[]",            // JSON: [{"t": title, "u": url}]
+    val recent: String = "[]",               // recently visited sites, same shape
     // Progress across every study set.
     val xp: Int = 0,
     val streak: Int = 0,
@@ -42,7 +44,11 @@ object Prefs {
             audience = sp.getString("audience", d.audience) ?: d.audience,
             questionsPerObjective = sp.getInt("questionsPerObjective", d.questionsPerObjective),
             newCardsPerDay = sp.getInt("newCardsPerDay", d.newCardsPerDay),
-            lastUrl = sp.getString("lastUrl", d.lastUrl) ?: d.lastUrl,
+            lastUrl = (sp.getString("lastUrl", d.lastUrl) ?: d.lastUrl)
+                // Early builds started on McGraw Hill Connect; that's no longer the default.
+                .let { if (it.trimEnd('/') == "https://connect.mheducation.com") "" else it },
+            bookmarks = sp.getString("bookmarks", d.bookmarks) ?: d.bookmarks,
+            recent = sp.getString("recent", d.recent) ?: d.recent,
             xp = sp.getInt("xp", d.xp),
             streak = sp.getInt("streak", d.streak),
             bestStreak = sp.getInt("bestStreak", d.bestStreak),
@@ -66,6 +72,8 @@ object Prefs {
             .putInt("questionsPerObjective", s.questionsPerObjective)
             .putInt("newCardsPerDay", s.newCardsPerDay)
             .putString("lastUrl", s.lastUrl)
+            .putString("bookmarks", s.bookmarks)
+            .putString("recent", s.recent)
             .putInt("xp", s.xp)
             .putInt("streak", s.streak)
             .putInt("bestStreak", s.bestStreak)
@@ -73,5 +81,55 @@ object Prefs {
             .putInt("xpToday", s.xpToday)
             .putInt("dailyGoal", s.dailyGoal)
             .apply()
+    }
+}
+
+/** A saved web page: bookmarks and recently visited sites for the in-app browser. */
+data class Link(val title: String, val url: String) {
+    val host: String get() = try {
+        android.net.Uri.parse(url).host.orEmpty().removePrefix("www.")
+    } catch (e: Exception) {
+        url
+    }
+}
+
+object Links {
+    private fun read(json: String): List<Link> = try {
+        val a = org.json.JSONArray(json)
+        (0 until a.length()).mapNotNull { i ->
+            a.optJSONObject(i)?.let { Link(it.optString("t"), it.optString("u")) }?.takeIf { it.url.isNotBlank() }
+        }
+    } catch (e: Exception) {
+        emptyList()
+    }
+
+    private fun write(list: List<Link>): String =
+        org.json.JSONArray(list.map { org.json.JSONObject().put("t", it.title).put("u", it.url) }).toString()
+
+    fun bookmarks(s: Settings = Prefs.current) = read(s.bookmarks)
+    fun recent(s: Settings = Prefs.current) = read(s.recent)
+
+    fun isBookmarked(url: String) = bookmarks().any { it.url == url }
+
+    fun toggleBookmark(title: String, url: String) {
+        if (url.isBlank()) return
+        Prefs.update { s ->
+            val list = read(s.bookmarks)
+            val next = if (list.any { it.url == url }) list.filter { it.url != url }
+            else list + Link(title.ifBlank { url }, url)
+            s.copy(bookmarks = write(next))
+        }
+    }
+
+    fun removeBookmark(url: String) = Prefs.update { s -> s.copy(bookmarks = write(read(s.bookmarks).filter { it.url != url })) }
+
+    /** Remembers the last page of each site (newest first, six sites). */
+    fun visited(title: String, url: String) {
+        if (!url.startsWith("http")) return
+        val link = Link(title.ifBlank { url }, url)
+        Prefs.update { s ->
+            val list = listOf(link) + read(s.recent).filter { it.host != link.host }
+            s.copy(recent = write(list.take(6)), lastUrl = url)
+        }
     }
 }
