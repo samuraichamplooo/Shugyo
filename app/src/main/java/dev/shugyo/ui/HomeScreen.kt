@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -196,28 +197,49 @@ private fun TrainerCard(xp: Int, goal: Int) {
     val level = Stats.level(xp)
     val today = Stats.xpToday()
     val streak = Stats.streakNow()
-    InkCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Ring(today.toFloat() / goal.coerceAtLeast(1), Gold, size = 72.dp, stroke = 7.dp) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("$today", color = Paper, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                    Text("/$goal XP", color = Faint, fontSize = 10.sp)
+    if (!dev.shugyo.game.Creatures.hasPartner()) {
+        InkCard(onClick = { Nav.go(Route.Partner) }, border = BattleColor.copy(alpha = 0.5f)) {
+            Text("Choose your partner", color = Paper, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Text("A study creature that trains, battles and evolves with you.", color = Faint, fontSize = 13.sp)
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                dev.shugyo.game.Creatures.starters.forEach {
+                    dev.shugyo.game.CreatureView(it.species, Modifier.size(80.dp))
                 }
             }
-            Spacer(Modifier.width(16.dp))
+        }
+        return
+    }
+    val (partner, stage) = dev.shugyo.game.Creatures.partner()
+    val evolveAt = dev.shugyo.game.Creatures.nextEvolution(level)
+    InkCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(contentAlignment = Alignment.BottomEnd) {
+                dev.shugyo.game.CreatureView(partner, Modifier.size(96.dp), stage = stage)
+                Ring(today.toFloat() / goal.coerceAtLeast(1), Gold, size = 34.dp, stroke = 4.dp) {
+                    Text("$today", color = Paper, fontWeight = FontWeight.Bold, fontSize = 9.sp)
+                }
+            }
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
+                Text(partner.name, color = Paper, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Level $level", color = Paper, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                    Spacer(Modifier.width(8.dp))
+                    Text("Lv $level · ${partner.element.emoji} ${dev.shugyo.game.Creatures.partnerStageName()}", color = Soft, fontSize = 13.sp)
+                    Spacer(Modifier.width(6.dp))
                     Pill(Stats.rank(level), Gold)
                 }
                 Spacer(Modifier.height(8.dp))
                 Bar(Stats.levelProgress(xp), Gold)
                 Spacer(Modifier.height(6.dp))
-                Row {
-                    Text("${Stats.xpFor(level + 1) - xp} XP to level ${level + 1}", color = Faint, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                    Text(if (streak > 0) "🔥 $streak-day streak" else "Start a streak today", color = if (streak > 0) Gold else Faint, fontSize = 12.sp)
-                }
+                Text(
+                    "${Stats.xpFor(level + 1) - xp} XP to Lv ${level + 1}" +
+                        (if (evolveAt > 0) " · evolves at Lv $evolveAt" else " · fully evolved"),
+                    color = Faint, fontSize = 12.sp,
+                )
+                Text(
+                    (if (streak > 0) "🔥 $streak-day streak" else "Start a streak today") + " · today $today/$goal XP",
+                    color = if (streak > 0) Gold else Faint, fontSize = 12.sp,
+                )
             }
         }
     }

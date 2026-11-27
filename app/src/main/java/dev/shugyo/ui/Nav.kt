@@ -16,6 +16,9 @@ sealed interface Route {
     data class Cards(val deckId: String, val all: Boolean = false, val starred: Boolean = false) : Route
     data class Quiz(val deckId: String, val objectiveId: String = "", val missedOnly: Boolean = false) : Route
     data class Notes(val deckId: String, val tab: Int = 0) : Route
+    data class Battle(val deckId: String, val objectiveId: String = "") : Route
+    data class Codex(val deckId: String) : Route
+    data object Partner : Route
 }
 
 object Nav {

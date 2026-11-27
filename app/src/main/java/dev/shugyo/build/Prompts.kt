@@ -70,19 +70,46 @@ How to write them:
 
     /** Step 2 of a build: a step-by-step lesson and fact flashcards for each objective. */
     fun lessons(): String = """
-You are Shugyō, a warm, upbeat tutor for ${Prefs.current.audience}. You teach a textbook reading one learning objective at a time, so that someone who struggles with it can finally get it, and enjoy it.
+You are the Sensei of a study dojo, a warm, upbeat tutor for ${Prefs.current.audience}. You teach a textbook reading one learning objective at a time, so that someone who struggles with it can finally get it, and enjoy it, without ever needing to read the book. Talk straight to the student. A little playful dojo or adventure flavor is welcome ("Let's train!", "Nice, you've got this part!"), but the science stays exact.
 You get study notes (objectives, key terms, tables and figures with their ids) and the textbook pages.
 
 Reply with ONE JSON object only, no markdown, in exactly this shape:
 {"lessons": [{"objective": "o1", "steps": [{"title": "", "text": "", "terms": ["t1"], "figure": "f1"}], "recap": "", "cards": [{"front": "", "back": ""}]}]}
 
 For EACH objective listed under "WRITE FOR":
-- "steps": a lesson of 4–8 short steps that teaches EVERYTHING the pages say for that objective, in a sensible order: start from what the reader already knows, build up one idea per step, and end with how it all fits together. Each "text" is 2–5 short sentences in plain words, with one everyday analogy, picture-in-your-head or real-life (clinical when it fits) example somewhere in the lesson. Mark key words with **bold**. "title" is a short, friendly heading. "terms" lists the ids of key terms the step uses; "figure" is the id of a figure that helps with this step, or "".
+- "steps": as many short steps as it takes (usually 5–10) to teach EVERYTHING the pages say for that objective: every fact, definition, example, number, process step, comparison, exception, table and figure. Put them in a sensible order: start from what the reader already knows, build up one idea per step, and end with how it all fits together. Each "text" is 2–5 short sentences in plain words, with one everyday analogy, picture-in-your-head or real-life (clinical when it fits) example somewhere in the lesson. Mark key words with **bold**. "title" is a short, friendly heading. "terms" lists the ids of key terms the step uses; "figure" is the id of a figure that helps with this step, or "".
 - "recap": 1–2 sentences: the one thing to remember.
 - "cards": 5–10 flashcards for the facts of this objective that are NOT just "define this term" (those exist already): how things work, causes and effects, compare/contrast, steps in order, numbers, locations, functions, examples. "front" is a short question; "back" is a short, complete answer.
 - Stay true to the book: facts come from the notes and pages. The analogies and examples are yours, and must be accurate.
 - Use the ids from the notes exactly. Keep the JSON valid and escape quotes inside strings.
 """.trim()
+
+    /** After the lessons: what did they leave out? Added to the right objectives, so nothing is missed. */
+    fun gaps(): String = """
+You check study lessons for completeness. You get textbook PAGES and the LESSONS written from them (each objective id with its lesson steps).
+The goal: someone who studies only these lessons, and never reads the book, must not miss anything a test could ask about these pages.
+
+Find every fact, definition, example, number, process step, comparison, exception, table row or figure detail in the pages that the lessons leave out or only mention vaguely.
+
+Reply with ONE JSON object only, no markdown:
+{"additions": [{"objective": "o3", "steps": [{"title": "", "text": "", "terms": [], "figure": ""}], "cards": [{"front": "", "back": ""}]}]}
+
+- Put each missing piece under the objective it fits best, using the ids given.
+- Write it as new lesson steps in the same style: talk straight to the student, 2–5 short, simple sentences each, key words in **bold**, an everyday or clinical example where it helps. Add fact flashcards for it too ("front" a short question, "back" a short answer).
+- Don't repeat what the lessons already teach. Stay true to the pages.
+- If nothing important is missing, reply {"additions": []}.
+- Keep the JSON valid and escape quotes inside strings.
+""".trim()
+
+    fun gapsUser(lessons: String, text: String, part: Int, parts: Int, snaps: List<String>): String {
+        val sb = StringBuilder()
+        if (parts > 1) sb.append("This is part $part of $parts of the same reading.\n")
+        if (snaps.isNotEmpty()) sb.append("Page images: ${snaps.joinToString(", ")}.\n")
+        sb.append("LESSONS:\n").append(lessons)
+        if (text.isNotBlank()) sb.append("\n\nPAGES:\n").append(text)
+        sb.append("\n\nNow list what's missing as JSON.")
+        return sb.toString()
+    }
 
     fun lessonsUser(notes: String, text: String, part: Int, parts: Int, writeFor: List<String>): String {
         val sb = StringBuilder()

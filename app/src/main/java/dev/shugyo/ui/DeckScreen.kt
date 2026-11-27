@@ -157,12 +157,12 @@ fun DeckScreen(deckId: String) {
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     ModeTile(
-                        "📘", "Learn", "${deck.objectives.size} step-by-step lessons", LearnColor,
-                        badge = if (learned < deck.objectives.size) "${deck.objectives.size - learned} to go" else "done ✓",
+                        "⛩", "Dojo Journey", "${deck.objectives.size} dojos, each with a Sensei's lesson", LearnColor,
+                        badge = if (learned < deck.objectives.size) "$learned/${deck.objectives.size} seals" else "all seals ✓",
                         modifier = Modifier.weight(1f),
                     ) { Nav.go(Route.Learn(deck.id)) }
                     ModeTile(
-                        "🃏", "Flashcards", "$cardCount cards: terms, facts & diagrams", CardsColor,
+                        "🌿", "Wild Encounters", "$cardCount flashcards: meet and befriend creatures", CardsColor,
                         badge = if (due > 0) "$due due" else "all caught up",
                         modifier = Modifier.weight(1f),
                     ) { Nav.go(Route.Cards(deck.id)) }
@@ -171,23 +171,24 @@ fun DeckScreen(deckId: String) {
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     ModeTile(
-                        "✍️", "Practice quiz", "${deck.questions.size} questions with hints", QuizColor,
-                        badge = if (missed > 0) "$missed to fix" else "",
+                        "⚔️", "Battle Dojo", "${deck.questions.size} questions as turn-based battles", BattleColor,
+                        badge = if (missed > 0) "$missed rematches" else "ready",
                         modifier = Modifier.weight(1f),
-                    ) { Nav.go(Route.Quiz(deck.id)) }
+                    ) { Nav.go(Route.Battle(deck.id)) }
                     ModeTile(
-                        "📚", "Notes", "Terms, tables & diagrams", NotesColor,
-                        badge = "${deck.figures.size} diagrams",
+                        "📖", "Codex", "Every key term is a creature to collect", NotesColor,
+                        badge = "${deck.terms.count { dev.shugyo.game.Creatures.befriended(deck, it) }}/${deck.terms.size} friends",
                         modifier = Modifier.weight(1f),
-                    ) { Nav.go(Route.Notes(deck.id)) }
+                    ) { Nav.go(Route.Codex(deck.id)) }
                 }
             }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     ModeTile(
-                        "⚔️", "Battle Dojo", "Turn-based battles with your study creatures", BattleColor,
-                        badge = "coming next", locked = true, modifier = Modifier.weight(1f),
-                    ) {}
+                        "📜", "Scrolls", "Notes: terms, tables & diagrams", QuizColor,
+                        badge = "${deck.figures.size} diagrams",
+                        modifier = Modifier.weight(1f),
+                    ) { Nav.go(Route.Notes(deck.id)) }
                     ModeTile(
                         "🏯", "Exam", "Timed mock exams across chapters", Color(0xFF9AA4B2),
                         badge = "coming next", locked = true, modifier = Modifier.weight(1f),

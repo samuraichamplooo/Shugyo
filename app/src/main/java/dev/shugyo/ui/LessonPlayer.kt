@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -49,6 +50,9 @@ import dev.shugyo.data.Objective
 import dev.shugyo.data.Stats
 import dev.shugyo.data.Store
 import dev.shugyo.data.Term
+import dev.shugyo.game.CreatureView
+import dev.shugyo.game.Creatures
+import dev.shugyo.game.Species
 
 /** What one screen of a lesson shows. */
 private sealed interface Page {
@@ -81,6 +85,8 @@ fun LessonPlayer(deckId: String, index: Int) {
         }
     }
     val terms = remember(deck, o) { deck.termsFor(o) }
+    val sensei = remember(deck.id, o.id) { Creatures.sensei(deck, o) }
+    var wrong by remember(o.id) { mutableIntStateOf(0) }
     val questions = remember(deck, o) { deck.questionsFor(o).sortedBy { it.level }.take(3) }
     val pages = remember(deck, o) {
         buildList<Page> {
@@ -151,25 +157,35 @@ fun LessonPlayer(deckId: String, index: Int) {
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 when (val pg = pages[shown.coerceIn(0, pages.size - 1)]) {
-                    Page.Intro -> Intro(o, beats.size, questions.size)
-                    is Page.Step -> StepCard(deck, beats[pg.i], pg.i, beats.size) { explaining = beats[pg.i] }
+                    Page.Intro -> Intro(o, sensei, beats.size, questions.size)
+                    is Page.Step -> StepCard(deck, sensei, beats[pg.i], pg.i, beats.size) { explaining = beats[pg.i] }
                     Page.Words -> {
                         Text("Key words for this one", style = MaterialTheme.typography.titleLarge, color = Paper)
                         Text("Tap a word for its definition and memory trick.", color = Faint, fontSize = 14.sp)
                         terms.forEach { TermCard(deck.id, it) }
                     }
                     is Page.Check -> {
-                        Text("Quick check ${pg.i + 1} of ${questions.size}", style = Label)
+                        // The Sensei's challenge: every right answer lands a hit.
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CreatureView(sensei, Modifier.size(84.dp), faceLeft = true, hitKey = right, attackKey = wrong)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("${sensei.name}'s challenge", color = Paper, fontWeight = FontWeight.Bold)
+                                Text("Round ${pg.i + 1} of ${questions.size}", color = Faint, fontSize = 12.sp)
+                                Spacer(Modifier.height(6.dp))
+                                Bar(1f - right.toFloat() / questions.size.coerceAtLeast(1), sensei.element.main, height = 7.dp)
+                            }
+                        }
                         val q = questions[pg.i]
                         QuestionCard(q, states.getValue(q.id)) { ok ->
                             answered++
-                            if (ok) right++
+                            if (ok) right++ else wrong++
                             if (ok) p.qRight[q.id] = (p.qRight[q.id] ?: 0) + 1 else p.qWrong[q.id] = (p.qWrong[q.id] ?: 0) + 1
                             Store.progressChanged(deck.id)
                             Stats.award(if (ok) 10 else 3)
                         }
                     }
-                    Page.Done -> DoneCard(o, passed, right, questions.size)
+                    Page.Done -> DoneCard(o, sensei, passed, right, questions.size)
                 }
             }
         }
@@ -242,9 +258,18 @@ fun LessonPlayer(deckId: String, index: Int) {
 }
 
 @Composable
-private fun Intro(o: Objective, steps: Int, checks: Int) {
+private fun Intro(o: Objective, sensei: Species, steps: Int, checks: Int) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        CreatureView(sensei, Modifier.size(110.dp))
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text("⛩ ${sensei.element.label} Dojo", color = sensei.element.main, fontWeight = FontWeight.Bold)
+            Text(sensei.name, color = Paper, fontFamily = Mincho, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+            Text("\"Welcome, student! Let's master this together.\"", color = Soft, fontSize = 14.sp)
+        }
+    }
     InkCard(Modifier.fillMaxWidth(), border = LearnColor.copy(alpha = 0.45f)) {
-        Text("OBJECTIVE", style = Label)
+        Text("TODAY'S OBJECTIVE", style = Label)
         Spacer(Modifier.height(6.dp))
         Text(o.text, color = Paper, fontFamily = Mincho, fontWeight = FontWeight.Bold, fontSize = 21.sp, lineHeight = 29.sp)
     }
@@ -256,16 +281,21 @@ private fun Intro(o: Objective, steps: Int, checks: Int) {
         }
     }
     Text(
-        "$steps short steps" + (if (checks > 0) ", then a $checks-question check" else "") + ". Take your time with each one.",
+        "$steps short lessons" + (if (checks > 0) ", then ${sensei.name}'s $checks-round challenge" else "") +
+            ". Pass it to earn this dojo's seal.",
         color = Faint, fontSize = 14.sp,
     )
 }
 
 @Composable
-private fun StepCard(deck: Deck, beat: Beat, i: Int, of: Int, onExplain: () -> Unit) {
+private fun StepCard(deck: Deck, sensei: Species, beat: Beat, i: Int, of: Int, onExplain: () -> Unit) {
     var zoom by remember(beat) { mutableStateOf(false) }
     var openTerm by remember(beat) { mutableStateOf<Term?>(null) }
-    Text("STEP ${i + 1} OF $of", style = Label)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        CreatureView(sensei, Modifier.size(52.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("${sensei.name} · lesson ${i + 1} of $of", style = Label)
+    }
     Text(beat.title, color = Paper, fontFamily = Mincho, fontWeight = FontWeight.Bold, fontSize = 24.sp, lineHeight = 31.sp)
     RichText(beat.text, color = Paper, style = MaterialTheme.typography.bodyLarge.copy(fontSize = 19.sp, lineHeight = 29.sp))
     val fig = deck.figure(beat.figure)
@@ -312,13 +342,25 @@ private fun StepCard(deck: Deck, beat: Beat, i: Int, of: Int, onExplain: () -> U
 }
 
 @Composable
-private fun DoneCard(o: Objective, passed: Boolean, right: Int, total: Int) {
+private fun DoneCard(o: Objective, sensei: Species, passed: Boolean, right: Int, total: Int) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(Modifier.height(12.dp))
-        Text(if (passed) "🎉" else "💪", fontSize = 56.sp)
+        if (passed) {
+            // The dojo's seal, stamped like a hanko.
+            Box(
+                Modifier
+                    .size(104.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(Seal),
+                contentAlignment = Alignment.Center,
+            ) { Text("修", color = Paper, fontFamily = Mincho, fontWeight = FontWeight.Bold, fontSize = 54.sp) }
+            Spacer(Modifier.height(8.dp))
+        } else {
+            CreatureView(sensei, Modifier.size(96.dp))
+        }
         Text(
-            if (passed) "Objective learned!" else "Almost there",
-            style = MaterialTheme.typography.headlineSmall, color = Paper,
+            if (passed) "${sensei.element.label} Dojo seal earned!" else "\"Train a little more, then return!\"",
+            style = MaterialTheme.typography.headlineSmall, color = Paper, textAlign = TextAlign.Center,
         )
         if (total > 0) {
             Text("$right of $total right" + if (passed) " · +25 XP" else "", color = if (passed) Good else Soft)

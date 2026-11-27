@@ -20,6 +20,8 @@ data class Settings(
     val desktopSite: Boolean = false,        // old: desktop layout everywhere (now per site, below)
     val desktopHosts: String = "",           // sites shown with their desktop layout, comma-separated
     val readPopups: Boolean = true,          // Scan page also taps linked terms to read their pop-up definitions
+    val partner: Int = -1,                   // which starter you picked (-1: not yet)
+    val partnerName: String = "",            // a nickname for your partner, if you gave one
     // Progress across every study set.
     val xp: Int = 0,
     val streak: Int = 0,
@@ -55,6 +57,8 @@ object Prefs {
             desktopSite = false,
             desktopHosts = sp.getString("desktopHosts", d.desktopHosts) ?: "",
             readPopups = sp.getBoolean("readPopups", d.readPopups),
+            partner = sp.getInt("partner", d.partner),
+            partnerName = sp.getString("partnerName", d.partnerName) ?: "",
             xp = sp.getInt("xp", d.xp),
             streak = sp.getInt("streak", d.streak),
             bestStreak = sp.getInt("bestStreak", d.bestStreak),
@@ -83,6 +87,8 @@ object Prefs {
             .putBoolean("desktopSite", s.desktopSite)
             .putString("desktopHosts", s.desktopHosts)
             .putBoolean("readPopups", s.readPopups)
+            .putInt("partner", s.partner)
+            .putString("partnerName", s.partnerName)
             .putInt("xp", s.xp)
             .putInt("streak", s.streak)
             .putInt("bestStreak", s.bestStreak)

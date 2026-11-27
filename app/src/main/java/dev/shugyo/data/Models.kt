@@ -214,6 +214,9 @@ class Progress(
     val qRight: MutableMap<String, Int> = HashMap(),
     val qWrong: MutableMap<String, Int> = HashMap(),
     val starred: MutableSet<String> = HashSet(),
+    /** Term creatures befriended in battle, and ones you've met. */
+    val friends: MutableSet<String> = HashSet(),
+    val seen: MutableSet<String> = HashSet(),
     var newDay: Long = -1,
     var newToday: Int = 0,
     var lastStudied: Long = 0,
@@ -229,6 +232,8 @@ class Progress(
             .put("qRight", JSONObject(qRight as Map<*, *>))
             .put("qWrong", JSONObject(qWrong as Map<*, *>))
             .put("starred", JSONArray(starred.toList()))
+            .put("friends", JSONArray(friends.toList()))
+            .put("seen", JSONArray(seen.toList()))
             .put("newDay", newDay)
             .put("newToday", newToday)
             .put("lastStudied", lastStudied)
@@ -247,6 +252,8 @@ class Progress(
             o.optJSONObject("qRight")?.let { m -> for (k in m.keys()) p.qRight[k] = m.optInt(k) }
             o.optJSONObject("qWrong")?.let { m -> for (k in m.keys()) p.qWrong[k] = m.optInt(k) }
             p.starred.addAll(stringsOf(o.optJSONArray("starred")))
+            p.friends.addAll(stringsOf(o.optJSONArray("friends")))
+            p.seen.addAll(stringsOf(o.optJSONArray("seen")))
             p.newDay = o.optLong("newDay", -1)
             p.newToday = o.optInt("newToday")
             p.lastStudied = o.optLong("lastStudied")

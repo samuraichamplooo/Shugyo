@@ -151,13 +151,21 @@ fun SettingsScreen() {
                 }
             }
 
-            SectionLabel("Coming next")
+            SectionLabel("Your partner")
             InkCard(Modifier.fillMaxWidth(), border = BattleColor.copy(alpha = 0.35f)) {
-                Text("⚔️ Battle Dojo and 🏯 Exams", color = Paper, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "Turn-based battles with study creatures that level up as you master terms, and timed mock exams across chapters.",
-                    color = Faint, fontSize = 13.sp,
+                    if (dev.shugyo.game.Creatures.hasPartner()) "Training with ${dev.shugyo.game.Creatures.partner().first.name}" else "No partner yet",
+                    color = Paper, fontWeight = FontWeight.SemiBold,
                 )
+                Text("Your partner evolves at levels 10 and 25. Changing partners keeps your level.", color = Faint, fontSize = 13.sp)
+                Spacer(Modifier.height(8.dp))
+                GhostButton(if (dev.shugyo.game.Creatures.hasPartner()) "Change partner" else "Choose a partner", { Nav.go(Route.Partner) })
+            }
+
+            SectionLabel("Coming next")
+            InkCard(Modifier.fillMaxWidth()) {
+                Text("🏯 Exams", color = Paper, fontWeight = FontWeight.SemiBold)
+                Text("Timed mock exams across chapters, as an elite battle.", color = Faint, fontSize = 13.sp)
             }
             Spacer(Modifier.height(24.dp))
         }

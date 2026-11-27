@@ -158,6 +158,9 @@ fun Root(activity: Activity) {
                 is Route.Cards -> FlashcardsScreen(route.deckId, route.all, route.starred)
                 is Route.Quiz -> QuizScreen(route.deckId, route.objectiveId, route.missedOnly)
                 is Route.Notes -> NotesScreen(route.deckId, route.tab)
+                is Route.Battle -> BattleScreen(route.deckId, route.objectiveId)
+                is Route.Codex -> CodexScreen(route.deckId)
+                Route.Partner -> Screen("Your partner") { StarterPicker(Modifier.weight(1f)) { Nav.back() } }
             }
         }
     }

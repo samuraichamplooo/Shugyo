@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -45,6 +47,9 @@ import dev.shugyo.data.Deck
 import dev.shugyo.data.Srs
 import dev.shugyo.data.Stats
 import dev.shugyo.data.Store
+import dev.shugyo.game.CreatureView
+import dev.shugyo.game.Creatures
+import dev.shugyo.game.Species
 
 /** Spaced-repetition flashcards: due cards first, then today's new ones. */
 @Composable
@@ -68,10 +73,19 @@ fun FlashcardsScreen(deckId: String, all: Boolean, starredOnly: Boolean) {
     var known by remember(everything) { mutableIntStateOf(0) }
     var xp by remember(everything) { mutableIntStateOf(0) }
     var flipped by remember { mutableStateOf(false) }
+    var cheer by remember { mutableStateOf("") }
+    var happy by remember { mutableIntStateOf(0) }
+    var startle by remember { mutableIntStateOf(0) }
+    androidx.compose.runtime.LaunchedEffect(cheer) {
+        if (cheer.isNotEmpty()) {
+            kotlinx.coroutines.delay(2600)
+            cheer = ""
+        }
+    }
     val total = done + queue.size
 
     Screen(
-        "Flashcards", subtitle = deck.title,
+        "Wild Encounters", subtitle = deck.title,
         actions = {
             Text(
                 if (definitionFirst) "Def → Term" else "Term → Def",
@@ -130,6 +144,28 @@ fun FlashcardsScreen(deckId: String, all: Boolean, starredOnly: Boolean) {
             Spacer(Modifier.height(6.dp))
             Bar(done.toFloat() / total.coerceAtLeast(1), CardsColor, height = 6.dp)
         }
+        // The creature this card belongs to, and how close you are to befriending it.
+        val creature = remember(deck.id, cardId) { creatureFor(deck, cardId) }
+        val box = p.cards[cardId]?.box ?: 0
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, top = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CreatureView(creature, Modifier.size(70.dp), faceLeft = true, hitKey = startle, attackKey = happy)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    cheer.ifEmpty { if (box == 0) "A wild ${creature.name} appeared! ${creature.element.emoji}" else "${creature.name} is back! ${creature.element.emoji}" },
+                    color = if (cheer.isNotEmpty()) Good else Paper, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
+                )
+                Text(
+                    "Bond " + "♥".repeat(minOf(box, Srs.MASTERED_BOX)) + "♡".repeat((Srs.MASTERED_BOX - box).coerceAtLeast(0)),
+                    color = CardsColor, fontSize = 14.sp,
+                )
+            }
+        }
         Box(
             Modifier
                 .weight(1f)
@@ -159,7 +195,16 @@ fun FlashcardsScreen(deckId: String, all: Boolean, starredOnly: Boolean) {
                         val days = next.due - Srs.today()
                         GradeButton(label, if (days <= 0) "soon" else "${days}d", color, Modifier.weight(1f)) {
                             val wasNew = cardId !in p.cards
+                            val before = p.cards[cardId]?.box ?: 0
                             p.cards[cardId] = next
+                            if (cardId.startsWith("t:")) p.seen.add(cardId.removePrefix("t:"))
+                            if (g == Srs.Grade.AGAIN) startle++ else happy++
+                            if (before < Srs.MASTERED_BOX && next.box >= Srs.MASTERED_BOX) {
+                                if (cardId.startsWith("t:")) p.friends.add(cardId.removePrefix("t:"))
+                                cheer = "🤝 You befriended ${creature.name}!"
+                                Stats.award(10)
+                                xp += 10
+                            }
                             if (wasNew) Srs.noteNewSeen(p)
                             Store.progressChanged(deck.id)
                             val gained = if (g == Srs.Grade.AGAIN) 1 else if (g == Srs.Grade.HARD) 2 else 3
@@ -180,6 +225,17 @@ fun FlashcardsScreen(deckId: String, all: Boolean, starredOnly: Boolean) {
             }
         }
     }
+}
+
+/** The creature a flashcard belongs to: a term's own creature, or one from its dojo. */
+private fun creatureFor(deck: Deck, cardId: String): Species {
+    val id = cardId.substringAfter(':')
+    return when {
+        cardId.startsWith("t:") -> deck.term(id)?.let { Creatures.forTerm(deck, it) }
+        cardId.startsWith("c:") -> deck.card(id)?.let { Creatures.forKey(deck, cardId, it.objective) }
+        cardId.startsWith("f:") -> deck.figure(id)?.let { Creatures.forKey(deck, cardId, it.objective) }
+        else -> null
+    } ?: Creatures.forKey(deck, cardId, "")
 }
 
 @Composable

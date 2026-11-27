@@ -111,8 +111,8 @@ object Builder {
             val lessons = org.json.JSONArray()
             for ((b, batch) in batches.withIndex()) {
                 if (batch.isEmpty()) break
-                val from = base + share * (0.36f + 0.32f * b / batches.size)
-                val span = share * 0.32f / batches.size
+                val from = base + share * (0.36f + 0.24f * b / batches.size)
+                val span = share * 0.24f / batches.size
                 onUpdate("Writing lessons for $partName (${b + 1} of ${batches.size})…", from)
                 val got = try {
                     step(
@@ -130,6 +130,29 @@ object Builder {
                 }
                 stepsDone++
                 objects(got?.optJSONArray("lessons")).forEach { lessons.put(it) }
+            }
+
+            // Coverage check: anything in the pages the lessons missed goes into the right objective.
+            if (lessons.length() > 0) {
+                val from = base + share * 0.6f
+                onUpdate("Checking nothing in $partName was missed…", from)
+                val snapImages = if (part.text.isBlank()) images else emptyList()
+                val got = try {
+                    step(
+                        "g", Prompts.gaps(),
+                        Prompts.gapsUser(lessonsText(lessons), part.text, i + 1, parts.size, part.snaps.map { it.label }),
+                        snapImages, 20_000, cancelled, used,
+                        onStatus = { onUpdate(it, from) },
+                        onChars = { chars ->
+                            onUpdate("Filling in what was missed… (${chars / 1000}k characters)", from + share * 0.08f * min(0.97f, chars / 8_000f))
+                        },
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    throw stopped(e, stepsDone, steps)
+                }
+                addGaps(lessons, objects(got?.optJSONArray("additions")))
             }
 
             // Questions.
@@ -221,6 +244,21 @@ object Builder {
                 )
                 lessons.addAll(objects(got?.optJSONArray("lessons")))
                 done++
+            }
+            // With the reading kept, check nothing in it was missed.
+            if (lessons.isNotEmpty() && source.isNotEmpty()) {
+                onUpdate("Checking nothing in the reading was missed…", done.toFloat() / total)
+                val arr = org.json.JSONArray()
+                lessons.forEach { arr.put(it) }
+                val got = step(
+                    "g", Prompts.gaps(), Prompts.gapsUser(lessonsText(arr), text, 1, 1, emptyList()),
+                    emptyList(), 20_000, cancelled, used,
+                    onStatus = { onUpdate(it, done.toFloat() / total) },
+                    onChars = {},
+                )
+                addGaps(arr, objects(got?.optJSONArray("additions")))
+                lessons.clear()
+                lessons.addAll(objects(arr))
             }
             for ((b, batch) in needQuestions.withIndex()) {
                 val from = done.toFloat() / total
@@ -635,6 +673,31 @@ object Builder {
             questions = unique(fixedQuestions, { it.id }) { q, id -> q.copy(id = id) },
             cards = unique(cards, { it.id }) { c, id -> c.copy(id = id) },
         )
+    }
+
+    /** The lessons as text, for the coverage check. */
+    private fun lessonsText(lessons: org.json.JSONArray): String {
+        val sb = StringBuilder()
+        for (l in objects(lessons)) {
+            sb.append("Objective ").append(l.str("objective")).append(":\n")
+            for (st in objects(l.optJSONArray("steps"))) sb.append("- ").append(st.str("title")).append(": ").append(st.str("text")).append('\n')
+            for (c in objects(l.optJSONArray("cards"))) sb.append("  card: ").append(c.str("front")).append(" / ").append(c.str("back")).append('\n')
+        }
+        return sb.toString()
+    }
+
+    /** Adds the coverage check's extra steps and cards to the lessons they belong to. */
+    private fun addGaps(lessons: org.json.JSONArray, additions: List<JSONObject>) {
+        for (a in additions) {
+            val oid = a.str("objective")
+            if (oid.isBlank()) continue
+            val target: JSONObject = objects(lessons).firstOrNull { it.str("objective") == oid }
+                ?: JSONObject().put("objective", oid).also { lessons.put(it) }
+            val steps: org.json.JSONArray = target.optJSONArray("steps") ?: org.json.JSONArray().also { target.put("steps", it) }
+            val cards: org.json.JSONArray = target.optJSONArray("cards") ?: org.json.JSONArray().also { target.put("cards", it) }
+            objects(a.optJSONArray("steps")).forEach { steps.put(it) }
+            objects(a.optJSONArray("cards")).forEach { cards.put(it) }
+        }
     }
 
     /** A lesson's steps as the AI wrote them, with ids mapped to the set's own. */

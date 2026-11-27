@@ -1,6 +1,8 @@
 package dev.shugyo.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,55 +38,81 @@ import androidx.compose.ui.unit.sp
 import dev.shugyo.data.Stats
 import dev.shugyo.data.Store
 
-/** The objectives of a set, in order, with what you've finished. */
+/**
+ * The Dojo Journey: each objective is a dojo on a path, run by its own Sensei creature. Finish a dojo's
+ * lesson and pass the Sensei's challenge to earn its seal.
+ */
 @Composable
 fun LearnScreen(deckId: String) {
     val decks by Store.decks.collectAsState()
-    val tick = Store.version.collectAsState().value
+    Store.version.collectAsState().value
     val deck = decks.firstOrNull { it.id == deckId } ?: return
     val p = Store.progress(deck.id)
     val learned = deck.objectives.count { it.id in p.learned }
     val next = deck.objectives.indexOfFirst { it.id !in p.learned }
 
-    Screen("Learn", subtitle = deck.title) {
+    Screen("Dojo Journey", subtitle = deck.title) {
         LazyColumn(
             Modifier.weight(1f),
             contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item {
                 InkCard(border = LearnColor.copy(alpha = 0.35f)) {
-                    Text("$learned of ${deck.objectives.size} objectives learned", color = Paper, fontWeight = FontWeight.SemiBold)
+                    Text("🏯 $learned of ${deck.objectives.size} seals earned", color = Paper, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
                     Spacer(Modifier.height(8.dp))
                     Bar(if (deck.objectives.isEmpty()) 0f else learned.toFloat() / deck.objectives.size, LearnColor)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Each objective is a short lesson you tap through, step by step, with its key words and diagrams, then a quick check. Pass it to learn the objective (+25 XP).",
+                        "Each dojo is one learning objective. Its Sensei teaches it step by step, then challenges you. " +
+                            "Pass the challenge to earn the dojo's seal (+25 XP).",
                         color = Faint, fontSize = 13.sp,
                     )
                 }
+                Spacer(Modifier.height(12.dp))
             }
             itemsIndexed(deck.objectives, key = { _, o -> o.id }) { i, o ->
                 val done = o.id in p.learned
-                InkCard(onClick = { Nav.go(Route.Player(deck.id, i)) }) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                val el = dev.shugyo.game.Creatures.dojoElement(o)
+                val sensei = remember(deck.id, o.id) { dev.shugyo.game.Creatures.sensei(deck, o) }
+                val left = i % 2 == 0
+                Column {
+                    // The trail between dojos.
+                    if (i > 0) {
                         Box(
                             Modifier
-                                .size(34.dp)
-                                .clip(CircleShape)
-                                .background(if (done) Good else CardHigh),
+                                .fillMaxWidth()
+                                .height(18.dp),
                             contentAlignment = Alignment.Center,
+                        ) { Text("· · ·", color = if (done) LearnColor else Line, fontSize = 14.sp) }
+                    }
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(if (i == next) CardHigh else Card)
+                            .clickable { Nav.go(Route.Player(deck.id, i)) }
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (left) DojoBadge(i, done, el)
+                        Column(
+                            Modifier
+                                .weight(1f)
+                                .padding(horizontal = 12.dp),
                         ) {
-                            Text(if (done) "✓" else "${i + 1}", color = if (done) Ink else Paper, fontWeight = FontWeight.Bold)
-                        }
-                        Spacer(Modifier.width(14.dp))
-                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "${el.emoji} ${el.label} Dojo · ${sensei.name}",
+                                color = el.main, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                            )
                             Text(o.text, color = Paper, maxLines = 3, overflow = TextOverflow.Ellipsis, fontSize = 15.sp)
                             Text(
-                                "${deck.termsFor(o).size} terms · ${deck.questionsFor(o).size} questions",
-                                color = Faint, fontSize = 12.sp,
+                                (if (done) "Seal earned ✓ · " else if (i == next) "▶ Up next · " else "") +
+                                    "${maxOf(o.lesson.size, 1)} steps · ${deck.questionsFor(o).size} challenges",
+                                color = if (done) Good else Faint, fontSize = 12.sp,
                             )
                         }
+                        dev.shugyo.game.CreatureView(sensei, Modifier.size(64.dp), bob = i == next)
+                        if (!left) DojoBadge(i, done, el)
                     }
                 }
             }
@@ -98,12 +126,30 @@ fun LearnScreen(deckId: String) {
                     .padding(16.dp),
             ) {
                 BigButton(
-                    if (learned == 0) "Start with objective 1" else "Continue: objective ${next + 1}",
+                    if (learned == 0) "⛩ Enter the first dojo" else "⛩ Continue: dojo ${next + 1}",
                     { Nav.go(Route.Player(deck.id, next)) },
                     Modifier.fillMaxWidth(), color = LearnColor, textColor = Ink,
                 )
             }
         }
+    }
+}
+
+/** A dojo's number, or its seal once earned. */
+@Composable
+private fun DojoBadge(i: Int, done: Boolean, el: dev.shugyo.game.Element) {
+    Box(
+        Modifier
+            .size(46.dp)
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .background(if (done) Seal else el.dark),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            if (done) "修" else "${i + 1}",
+            color = Paper, fontWeight = FontWeight.Bold, fontSize = if (done) 22.sp else 17.sp,
+            fontFamily = if (done) Mincho else null,
+        )
     }
 }
 
