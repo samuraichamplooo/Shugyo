@@ -310,7 +310,7 @@ private fun Battle(
                             combo >= 3 -> " Combo ×$combo!"
                             else -> ""
                         }
-                        log = "${partner.name} used ${partner.element.move}!$extra"
+                        log = "${partner.name} used ${Creatures.partnerMove()}!$extra"
                         var gained = 10
                         if (enemyHp == 0) {
                             enemyDown = true
@@ -523,6 +523,7 @@ fun StarterPicker(modifier: Modifier = Modifier, onPicked: () -> Unit = {}) {
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
                             Text("${s.species.name} ${s.species.element.emoji}", color = Paper, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                            Text("${s.animal} · ${s.species.element.label} · ${s.move}", color = s.species.element.main, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             Text(s.blurb, color = Soft, fontSize = 13.sp)
                             Text("Evolves into ${s.stages[1]}, then ${s.stages[2]}", color = Faint, fontSize = 12.sp)
                         }

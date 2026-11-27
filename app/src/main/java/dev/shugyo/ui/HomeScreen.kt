@@ -1,6 +1,7 @@
 package dev.shugyo.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -78,11 +79,14 @@ fun HomeScreen(loaded: Boolean) {
 
             if (run.running) {
                 item {
-                    InkCard(onClick = { if (!run.upgrade) Nav.go(Route.Build) }, border = Gold.copy(alpha = 0.4f)) {
+                    InkCard(onClick = { if (run.upgrade) Nav.go(Route.DeckHome(run.upgradeDeck)) else Nav.go(Route.Build) }, border = Gold.copy(alpha = 0.4f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(Modifier.padding(end = 14.dp), color = Gold)
                             Column {
-                                Text("Building your study set… ${(run.fraction * 100).toInt()}%", color = Paper, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    (if (run.upgrade) "Upgrading a study set… " else "Building your study set… ") + "${(run.fraction * 100).toInt()}%",
+                                    color = Paper, fontWeight = FontWeight.SemiBold,
+                                )
                                 Text(run.status, color = Faint, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
@@ -202,9 +206,12 @@ private fun TrainerCard(xp: Int, goal: Int) {
             Text("Choose your partner", color = Paper, fontWeight = FontWeight.Bold, fontSize = 18.sp)
             Text("A study creature that trains, battles and evolves with you.", color = Faint, fontSize = 13.sp)
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 dev.shugyo.game.Creatures.starters.forEach {
-                    dev.shugyo.game.CreatureView(it.species, Modifier.size(80.dp))
+                    dev.shugyo.game.CreatureView(it.species, Modifier.size(72.dp))
                 }
             }
         }

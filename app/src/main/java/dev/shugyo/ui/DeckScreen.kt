@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
@@ -119,10 +120,17 @@ fun DeckScreen(deckId: String) {
                     }
                 }
             }
-            if (run.running && run.upgrade) {
+            if (run.running && run.upgrade && run.upgradeDeck == deck.id) {
                 item {
                     InkCard(border = Gold.copy(alpha = 0.4f)) {
-                        Text("✨ Adding lessons and cards… ${(run.fraction * 100).toInt()}%", color = Paper, fontWeight = FontWeight.SemiBold)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                Modifier.size(22.dp), color = Gold, strokeWidth = 3.dp,
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text("✨ Upgrading this set… ${(run.fraction * 100).toInt()}%", color = Paper, fontWeight = FontWeight.SemiBold)
+                        }
+                        Spacer(Modifier.height(6.dp))
                         Text(run.status, color = Faint, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Spacer(Modifier.height(8.dp))
                         Bar(run.fraction, Gold)
@@ -136,7 +144,7 @@ fun DeckScreen(deckId: String) {
                         Text("The upgrade didn't finish", color = Bad, fontWeight = FontWeight.Bold)
                         Text(run.error, color = Soft, fontSize = 14.sp)
                         Spacer(Modifier.height(8.dp))
-                        GhostButton("Try again", { BuildRunner.clear(); BuildRunner.upgrade(context, deck.id) })
+                        GhostButton("Try again (finished steps are kept)", { BuildRunner.clear(); BuildRunner.upgrade(context, deck.id) })
                     }
                 }
             } else if (!deck.hasLessons || deck.cards.isEmpty()) {
@@ -150,7 +158,11 @@ fun DeckScreen(deckId: String) {
                             color = Soft, fontSize = 14.sp,
                         )
                         Spacer(Modifier.height(10.dp))
-                        BigButton("Upgrade this set", { BuildRunner.upgrade(context, deck.id) }, Modifier.fillMaxWidth(), color = Gold, textColor = Ink)
+                        BigButton(
+                            if (run.running) "Another set is being built…" else "Upgrade this set",
+                            { BuildRunner.upgrade(context, deck.id) },
+                            Modifier.fillMaxWidth(), color = Gold, textColor = Ink, enabled = !run.running,
+                        )
                     }
                 }
             }

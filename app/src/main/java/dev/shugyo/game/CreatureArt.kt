@@ -77,10 +77,18 @@ fun CreatureView(
         },
     ) {
         val mirror = faceLeft
+        val partner = species.key.removePrefix("starter:").takeIf { species.key.startsWith("starter:") }?.toIntOrNull()
+        val draw: DrawScope.() -> Unit = {
+            if (partner != null && PartnerArt.has(partner)) {
+                with(PartnerArt) { drawPartner(partner, stage, silhouette, flash.value) }
+            } else {
+                drawCreature(species, stage, silhouette, flash.value)
+            }
+        }
         if (mirror) {
-            withTransform({ scale(-1f, 1f, center) }) { drawCreature(species, stage, silhouette, flash.value) }
+            withTransform({ scale(-1f, 1f, center) }) { draw() }
         } else {
-            drawCreature(species, stage, silhouette, flash.value)
+            draw()
         }
     }
 }

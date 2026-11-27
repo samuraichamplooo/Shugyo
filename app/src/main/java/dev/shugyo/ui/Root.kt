@@ -58,6 +58,8 @@ object BuildRunner {
         val doneDeck: String = "",
         /** The finished job improved an existing set (nothing was built from the basket). */
         val upgrade: Boolean = false,
+        /** The set being upgraded. */
+        val upgradeDeck: String = "",
     )
 
     private val _state = MutableStateFlow(State())
@@ -96,7 +98,7 @@ object BuildRunner {
     /** Adds lessons, fact cards and questions to a set built earlier. */
     fun upgrade(context: android.content.Context, deckId: String) {
         if (_state.value.running) return
-        _state.value = State(running = true, status = "Getting ready…", fraction = 0.01f)
+        _state.value = State(running = true, status = "Getting ready…", fraction = 0.01f, upgrade = true, upgradeDeck = deckId)
         dev.shugyo.BuildService.start(context)
         job = scope.launch {
             try {

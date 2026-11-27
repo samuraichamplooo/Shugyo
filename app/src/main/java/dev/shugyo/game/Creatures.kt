@@ -45,8 +45,8 @@ data class Species(
     val headband: Boolean = false,
 )
 
-/** A partner you can pick: three stages, each with its own name. */
-data class Starter(val species: Species, val stages: List<String>, val blurb: String)
+/** A partner you can pick: three stages, each with its own name, and a signature move. */
+data class Starter(val species: Species, val stages: List<String>, val blurb: String, val move: String, val animal: String)
 
 object Creatures {
     private val suffixes = listOf("ki", "maru", "zu", "bo", "ra", "ko", "ji", "ta", "mi", "ri", "suke", "chi")
@@ -119,23 +119,60 @@ object Creatures {
 
     // ---------------------------------------------------------------- your partner
 
+    // Indices 0–2 are the original three, so an existing pick keeps working.
     val starters = listOf(
         Starter(
             Species("starter:0", "Hinoko", Element.EMBER, body = 0, ears = 1, eyes = 1, tail = 2, pattern = 3, mouth = 1, headband = true),
             listOf("Hinoko", "Kagaribi", "Homura"),
-            "A fiery fox kit with a big heart. Hits hard on tricky questions.",
+            "A fox kit with a fiery spirit. Grows another tail each time it evolves.",
+            "Fox Fire", "Fox",
         ),
         Starter(
             Species("starter:1", "Shizuku", Element.TIDE, body = 1, ears = 3, eyes = 3, tail = 4, pattern = 0, mouth = 0, headband = true),
             listOf("Shizuku", "Seseragi", "Ōnami"),
-            "A calm droplet spirit. Steady, patient and always curious.",
+            "A playful river otter. Calm, curious and never lets go of a good idea.",
+            "Bubble Burst", "Otter",
         ),
         Starter(
-            Species("starter:2", "Kodama", Element.LEAF, body = 3, ears = 4, eyes = 0, tail = 3, pattern = 1, mouth = 2, headband = true),
-            listOf("Kodama", "Komorebi", "Shinboku"),
-            "A sprout from the old forest. Grows a little with every lesson.",
+            Species("starter:2", "Konoha", Element.LEAF, body = 3, ears = 4, eyes = 0, tail = 3, pattern = 1, mouth = 2, headband = true),
+            listOf("Konoha", "Bunbuku", "Mamedanuki"),
+            "A cheeky tanuki with a magic leaf. Learns a new trick with every lesson.",
+            "Leaf Trick", "Tanuki",
+        ),
+        Starter(
+            Species("starter:3", "Kaen", Element.EMBER, body = 0, ears = 2, eyes = 1, tail = 2, pattern = 0, mouth = 1, headband = true),
+            listOf("Kaen", "Enryū", "Gōka"),
+            "A baby dragon with a big roar. Its horns and wings grow as you level up.",
+            "Dragon Flame", "Dragon",
+        ),
+        Starter(
+            Species("starter:4", "Kuro", Element.MIST, body = 0, ears = 1, eyes = 1, tail = 1, pattern = 0, mouth = 0, headband = true),
+            listOf("Kuro", "Shinobi", "Nekomata"),
+            "A ninja cat with golden eyes. Quick, quiet and lands every pounce.",
+            "Shadow Pounce", "Cat",
+        ),
+        Starter(
+            Species("starter:5", "Pochi", Element.STONE, body = 0, ears = 1, eyes = 0, tail = 1, pattern = 0, mouth = 0, headband = true),
+            listOf("Pochi", "Hayate", "Komainu"),
+            "A loyal shiba pup. Never gives up, and grows into a guardian lion-dog.",
+            "Loyal Rush", "Dog",
+        ),
+        Starter(
+            Species("starter:6", "Mochi", Element.FROST, body = 0, ears = 5, eyes = 0, tail = 1, pattern = 0, mouth = 0, headband = true),
+            listOf("Mochi", "Tsukimi", "Gekkō"),
+            "A moon rabbit who pounds mochi. Hops fast and remembers everything.",
+            "Moon Hop", "Rabbit",
+        ),
+        Starter(
+            Species("starter:7", "Hina", Element.SPARK, body = 0, ears = 0, eyes = 0, tail = 0, pattern = 0, mouth = 0, headband = true),
+            listOf("Hina", "Hayabusa", "Ōwashi"),
+            "An eagle chick with big dreams. Soars higher (and zaps harder) every level.",
+            "Thunder Talon", "Eagle",
         ),
     )
+
+    /** Your partner's signature move. */
+    fun partnerMove(): String = starters[Prefs.current.partner.coerceIn(0, starters.size - 1)].move
 
     /** 1, 2 or 3: your partner evolves at levels 10 and 25. */
     fun stage(level: Int) = when {
