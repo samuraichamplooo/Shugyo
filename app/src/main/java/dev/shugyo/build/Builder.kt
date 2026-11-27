@@ -249,7 +249,10 @@ object Builder {
                 )
             }
             objects(o.optJSONArray("figures")).forEachIndexed { i, f ->
-                val fid = id(f.str("id"), "f", i + 1)
+                // Each figure gets its own file, even if the AI reused an id.
+                val fid = id(f.str("id"), "f", i + 1).let { base ->
+                    if (figures.none { it.id == base }) base else "${base}_${i + 1}"
+                }
                 val src = f.str("src").lowercase().trim()
                 val file = File(dir, "fig_$fid.jpg")
                 val ok = when {
@@ -295,6 +298,7 @@ object Builder {
         }
 
         val firstPage = pages.firstOrNull()
+        // Lists on screen are keyed by id, so every id has to be different.
         return Deck(
             id = deckId,
             title = titleHint.ifBlank { title.ifBlank { firstPage?.title ?: "New study set" } },
@@ -303,12 +307,24 @@ object Builder {
             created = System.currentTimeMillis(),
             overview = overview.joinToString(" "),
             sections = sections,
-            objectives = objectives,
-            terms = fixedTerms,
-            tables = tables,
+            objectives = unique(objectives, { it.id }) { o, id -> o.copy(id = id) },
+            terms = unique(fixedTerms, { it.id }) { t, id -> t.copy(id = id) },
+            tables = unique(tables, { it.id }) { t, id -> t.copy(id = id) },
             figures = figures,
-            questions = fixedQuestions,
+            questions = unique(fixedQuestions, { it.id }) { q, id -> q.copy(id = id) },
         )
+    }
+
+    private fun <T> unique(list: List<T>, idOf: (T) -> String, withId: (T, String) -> T): List<T> {
+        val seen = HashSet<String>()
+        return list.map { x ->
+            val id = idOf(x)
+            if (seen.add(id)) x else {
+                var n = 2
+                while (!seen.add("${id}_$n")) n++
+                withId(x, "${id}_$n")
+            }
+        }
     }
 
     /** A question as the AI wrote it, checked and tidied. Null if it can't be used. */
