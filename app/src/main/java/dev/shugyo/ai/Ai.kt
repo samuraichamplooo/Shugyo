@@ -48,6 +48,7 @@ object Ai {
         maxTokens: Int = 4096,
         json: Boolean = false,
         quick: Boolean = true,
+        timeBudgetMs: Long = if (quick) 60_000 else 600_000,
         cancelled: () -> Boolean = { false },
         onStatus: (String) -> Unit = {},
         onProgress: (Int) -> Unit = {},
@@ -57,24 +58,19 @@ object Ai {
         var lastError: Exception? = null
         for ((i, engine) in engines.withIndex()) {
             if (cancelled()) throw CancellationException("cancelled")
-            val sb = StringBuilder()
-            val sink: (String) -> Unit = {
-                sb.append(it)
-                onProgress(sb.length)
-            }
             try {
-                when (engine) {
+                val text = when (engine) {
                     Engine.GEMINI -> Gemini.stream(
                         Prefs.current.geminiKey, system, user, images, maxTokens, json, quick, cancelled,
-                        timeBudgetMs = if (quick) 60_000 else 240_000,
-                        onStatus = onStatus, onText = sink,
+                        timeBudgetMs = timeBudgetMs, onStatus = onStatus, onChars = onProgress,
                     )
                     Engine.CLAUDE -> Claude.stream(
-                        Prefs.current.claudeKey, system, user, images, maxTokens, quick, cancelled, sink,
+                        Prefs.current.claudeKey, system, user, images, maxTokens, quick, cancelled, onStatus, onProgress,
                     )
                 }
+                if (cancelled()) throw CancellationException("cancelled")
                 coolDown.remove(engine)
-                val out = sb.toString().trim()
+                val out = text.trim()
                 if (out.isNotEmpty()) return@withContext out
                 lastError = AiException("${engine.label} answered with nothing.")
             } catch (e: CancellationException) {
@@ -94,18 +90,17 @@ object Ai {
         Engine.values().map { engine ->
             val key = if (engine == Engine.GEMINI) s.geminiKey else s.claudeKey
             if (key.isBlank()) return@map "${engine.label}: no key added"
-            val sb = StringBuilder()
             try {
-                when (engine) {
+                val text = when (engine) {
                     Engine.GEMINI -> Gemini.stream(
                         key, "Reply with one word.", "Say ready.", emptyList(), 64, false, true, { false },
-                        45_000, {}, { sb.append(it) },
+                        45_000, {}, {},
                     )
                     Engine.CLAUDE -> Claude.stream(
-                        key, "Reply with one word.", "Say ready.", emptyList(), 64, true, { false }, { sb.append(it) },
+                        key, "Reply with one word.", "Say ready.", emptyList(), 64, true, { false }, {}, {},
                     )
                 }
-                if (sb.isBlank()) "${engine.label}: ✗ answered with nothing"
+                if (text.isBlank()) "${engine.label}: ✗ answered with nothing"
                 else "${engine.label}: ✓ works (${if (engine == Engine.GEMINI) Gemini.lastModel else Claude.lastModel})"
             } catch (e: Exception) {
                 "${engine.label}: ✗ ${e.message ?: e.javaClass.simpleName}"

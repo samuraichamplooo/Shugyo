@@ -252,17 +252,33 @@ object ScanScript {
   var POPUP = '[role=dialog],[role=tooltip],[role=alertdialog],[aria-modal=true],.popover,.tooltip,.modal,.tippy-box,' +
     '[class*=popover],[class*=Popover],[class*=tooltip],[class*=Tooltip],[class*=glossary],[class*=Glossary],' +
     '[class*=definition],[class*=Definition],[class*=flyout],[class*=Flyout],[class*=popup],[class*=Popup],[class*=modal],[class*=Modal]';
+  // The reader may show the pop-up in the page around this frame (e.g. a srcdoc frame), so look there too.
+  function docs() {
+    var list = [document];
+    try {
+      var w = window;
+      while (w !== w.parent) {
+        w = w.parent;
+        if (w.document && w.document.body) list.push(w.document);
+      }
+    } catch (e) {}
+    return list;
+  }
   function shown(el) {
     if (!el || !el.isConnected) return false;
     var r = el.getBoundingClientRect();
     if (r.width < 2 || r.height < 2) return false;
-    var s = window.getComputedStyle(el);
+    var view = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+    var s = view.getComputedStyle(el);
     return s.visibility !== 'hidden' && s.display !== 'none' && parseFloat(s.opacity || '1') > 0.05;
   }
   function textIn(el) { return clean(el.innerText || el.textContent || ''); }
   function popupsShown() {
-    var list = [], all = document.querySelectorAll(POPUP);
-    for (var i = 0; i < all.length; i++) if (shown(all[i])) list.push(all[i]);
+    var list = [], ds = docs();
+    for (var d = 0; d < ds.length; d++) {
+      var all = ds[d].querySelectorAll(POPUP);
+      for (var i = 0; i < all.length; i++) if (shown(all[i])) list.push(all[i]);
+    }
     return list;
   }
   function pick(before, added, trigger, term) {
@@ -293,7 +309,7 @@ object ScanScript {
       t = t.replace(/^(glossary|definition|key term|close|done|ok|\u00d7|x)\b[\s:.-]*/i, '');
       if (t.toLowerCase().indexOf(low) === 0) t = t.slice(term.length).replace(/^[\s:.,\u2013\u2014-]+/, '');
     }
-    t = t.replace(/[\s]*(close|\u00d7|done|ok)$/i, '');
+    t = t.replace(/\s*(close|\u00d7|done|ok|x)$/i, '');
     return t.trim().slice(0, 900);
   }
   async function closePopup(p, trigger) {
@@ -301,10 +317,12 @@ object ScanScript {
       '.close, .btn-close, button[class*=close i], [role=button][aria-label*="lose" i]');
     if (btn) { btn.click(); await sleep(250); if (!shown(p)) return; }
     var esc = {key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true};
-    try {
-      (document.activeElement || document.body).dispatchEvent(new KeyboardEvent('keydown', esc));
-      document.dispatchEvent(new KeyboardEvent('keydown', esc));
-    } catch (e) {}
+    docs().forEach(function (d) {
+      try {
+        (d.activeElement || d.body).dispatchEvent(new KeyboardEvent('keydown', esc));
+        d.dispatchEvent(new KeyboardEvent('keydown', esc));
+      } catch (e) {}
+    });
     await sleep(250);
     if (!shown(p)) return;
     trigger.click();
@@ -326,8 +344,12 @@ object ScanScript {
         else m.addedNodes.forEach(function (n) { if (n.nodeType === 1) added.push(n); });
       });
     });
-    mo.observe(document.body, {childList: true, subtree: true, attributes: true,
-      attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'open']});
+    docs().forEach(function (d) {
+      try {
+        mo.observe(d.body, {childList: true, subtree: true, attributes: true,
+          attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'open']});
+      } catch (e) {}
+    });
     try { el.scrollIntoView({block: 'center'}); } catch (e) {}
     el.click();
     var found = null;

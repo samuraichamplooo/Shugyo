@@ -8,6 +8,7 @@ import dev.shugyo.scan.Basket
 class App : Application() {
     override fun onCreate() {
         super.onCreate()
+        instance = this
         // If the app ever closes on its own, keep what went wrong so the next launch can show it.
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, e ->
@@ -34,6 +35,12 @@ class App : Application() {
 
     companion object {
         const val CRASH_FILE = "last_crash.txt"
+        lateinit var instance: App
+            private set
+
+        /** True while Shugyō is on screen. */
+        @Volatile
+        var visible = false
     }
 }
 

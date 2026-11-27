@@ -63,9 +63,17 @@ object BuildRunner {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var job: Job? = null
 
-    fun start(items: List<dev.shugyo.scan.BasketItem>, title: String, subject: String, into: String? = null) {
+    fun start(
+        context: android.content.Context,
+        items: List<dev.shugyo.scan.BasketItem>,
+        title: String,
+        subject: String,
+        into: String? = null,
+    ) {
         if (_state.value.running) return
         _state.value = State(running = true, status = "Getting ready…", fraction = 0.01f)
+        // Keeps the build alive (and online) if you switch apps or lock the phone.
+        dev.shugyo.BuildService.start(context)
         job = scope.launch {
             try {
                 val deck = Builder.build(

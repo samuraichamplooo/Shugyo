@@ -3,8 +3,9 @@ package dev.shugyo.build
 import dev.shugyo.data.Prefs
 
 object Prompts {
-    fun build(perObjective: Int): String = """
-You are Shugyō, a friendly study coach. You turn textbook pages into a complete study set for ${Prefs.current.audience}.
+    /** Step 1 of a build: the notes (everything but the questions). */
+    fun notes(): String = """
+You are Shugyō, a friendly study coach. You turn textbook pages into study notes for ${Prefs.current.audience}.
 The pages come as text (bold key terms look like **this**, pictures appear as [FIGURE img3: caption], tables as | rows |) and/or as page images named snap1, snap2… Read everything carefully, including the text inside images.
 
 Reply with ONE JSON object only, no markdown, in exactly this shape:
@@ -16,8 +17,7 @@ Reply with ONE JSON object only, no markdown, in exactly this shape:
  "objectives": [{"id": "o1", "text": "", "simple": "", "explain": "", "terms": ["t1"]}],
  "terms": [{"id": "t1", "term": "", "definition": "", "simple": "", "mnemonic": "", "example": "", "objective": "o1"}],
  "tables": [{"id": "tb1", "title": "", "headers": [""], "rows": [[""]], "takeaway": "", "objective": "o1"}],
- "figures": [{"id": "f1", "src": "img3", "box": [0, 0, 1000, 1000], "caption": "", "explain": "", "labels": [""], "objective": "o1"}],
- "questions": [{"type": "mc", "prompt": "", "choices": ["", "", "", ""], "answer": [0], "hint": "", "explain": "", "objective": "o1", "term": "t1", "level": 1}]
+ "figures": [{"id": "f1", "src": "img3", "box": [0, 0, 1000, 1000], "caption": "", "explain": "", "labels": [""], "objective": "o1"}]
 }
 
 How to fill it in:
@@ -26,14 +26,37 @@ How to fill it in:
 - terms: every bolded or glossary term and every other important concept. "definition" is the book's meaning, short and faithful. When the pages end with a GLOSSARY of the book's own pop-up definitions, use those for those terms (word for word when short). "simple" explains it so a 12-year-old would get it. "mnemonic" is a short, catchy memory trick (acronym, rhyme, word link or vivid picture). "example" is an everyday or clinical example. Link each term to its objective.
 - tables: reproduce each table that teaches something, faithfully, with its headers and rows. "takeaway" is the one thing to remember from it.
 - figures: one for every diagram, chart, labeled drawing or teaching photo. Skip logos, icons, decorative photos and author photos. "src" names the image it comes from (imgN or snapN). For a figure inside a page image (snapN), "box" goes tightly around just that figure and its labels as [ymin, xmin, ymax, xmax] on a 0–1000 scale. Leave "box" out for imgN pictures. "explain" says in plain words what it shows and how to read it. "labels" lists its labeled parts, if any.
-- questions: about $perObjective per objective, covering most key terms, mixing these types:
-  "mc": 4 choices, exactly one right;
-  "sata": 5 choices with 2–4 right, and the prompt ends with "Select all that apply.";
-  "tf": choices exactly ["True", "False"].
-  "answer" lists the 0-based positions of the right choices. Spread the right answers across positions. Wrong choices must be believable (common mix-ups, not jokes). "level" 1 = recall, 2 = understanding, 3 = applying it to a short scenario (clinical when it fits); use all three. "hint" nudges toward the answer without giving it away. "explain" says why the right answer is right and why the most tempting wrong one is wrong, in 1–3 sentences.
 - Language: warm, clear and a little fun. Short sentences. No filler.
 - Use ids exactly like o1, t1, tb1, f1 so the links match. Keep the JSON valid and escape quotes inside strings.
 """.trim()
+
+    /** Step 2 of a build: practice questions for the notes from step 1. */
+    fun questions(perObjective: Int): String = """
+You are Shugyō, a friendly study coach who writes exam-style practice questions for ${Prefs.current.audience}.
+You get study notes (objectives and key terms with their ids) and the textbook pages they came from.
+
+Reply with ONE JSON object only, no markdown, in exactly this shape:
+{"questions": [{"type": "mc", "prompt": "", "choices": ["", "", "", ""], "answer": [0], "hint": "", "explain": "", "objective": "o1", "term": "t1", "level": 1}]}
+
+How to write them:
+- About $perObjective per objective, covering most key terms. Use the objective and term ids from the notes exactly.
+- Mix the types: "mc" has 4 choices with exactly one right; "sata" has 5 choices with 2–4 right and the prompt ends with "Select all that apply."; "tf" has choices exactly ["True", "False"].
+- "answer" lists the 0-based positions of the right choices. Spread the right answers across positions.
+- Wrong choices must be believable (common mix-ups, not jokes).
+- "level" 1 = recall, 2 = understanding, 3 = applying it to a short scenario (clinical when it fits); use all three.
+- "hint" nudges toward the answer without giving it away. "explain" says why the right answer is right and why the most tempting wrong one is wrong, in 1–3 sentences.
+- Stay true to the book: every right answer must be supported by the notes or pages.
+- Keep the JSON valid and escape quotes inside strings.
+""".trim()
+
+    fun questionsUser(notes: String, text: String, part: Int, parts: Int): String {
+        val sb = StringBuilder()
+        if (parts > 1) sb.append("This is part $part of $parts of the same reading.\n")
+        sb.append("NOTES:\n").append(notes)
+        if (text.isNotBlank()) sb.append("\n\nPAGES:\n").append(text)
+        sb.append("\n\nNow write the questions JSON.")
+        return sb.toString()
+    }
 
     fun buildUser(text: String, snaps: List<String>, part: Int, parts: Int, titleHint: String, subjectHint: String): String {
         val sb = StringBuilder()
@@ -45,7 +68,7 @@ How to fill it in:
         if (snaps.isNotEmpty()) sb.append("Page images: ${snaps.joinToString(", ")} (in reading order).\n")
         if (text.isNotBlank()) sb.append("\nPAGES:\n").append(text)
         else sb.append("\nEverything is in the page images above.")
-        sb.append("\n\nNow write the study set JSON.")
+        sb.append("\n\nNow write the study notes JSON.")
         return sb.toString()
     }
 

@@ -73,6 +73,23 @@ fun BuildScreen() {
     var target by remember { mutableStateOf<String?>(null) }   // null: a new study set
     val targetDeck = decks.firstOrNull { it.id == target }
     val importers = rememberImporters(onAdded = {})
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val askNotifications = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { }
+    fun startBuild() {
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            try {
+                askNotifications.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            } catch (e: Exception) {
+                // no permission screen: build anyway
+            }
+        }
+        BuildRunner.start(context, items, title, subject, target)
+    }
 
     LaunchedEffect(run.doneDeck) {
         if (run.doneDeck.isNotEmpty()) {
@@ -240,7 +257,7 @@ fun BuildScreen() {
             } else {
                 BigButton(
                     if (targetDeck != null) "⚔️ Add to my study set" else "⚔️ Build my study set",
-                    { BuildRunner.start(items, title, subject, target) },
+                    { startBuild() },
                     Modifier.fillMaxWidth(),
                     enabled = items.isNotEmpty(),
                 )
@@ -310,8 +327,21 @@ private fun Building(run: BuildRunner.State) {
         Spacer(Modifier.height(8.dp))
         Text("${(run.fraction * 100).toInt()}%", color = Faint, fontSize = 13.sp)
         Spacer(Modifier.height(24.dp))
+        var seconds by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+        LaunchedEffect(Unit) {
+            while (true) {
+                kotlinx.coroutines.delay(1000)
+                seconds++
+            }
+        }
         Text(
-            "A full chapter takes a minute or two. You can leave this screen; it keeps going.",
+            "%d:%02d".format(seconds / 60, seconds % 60) + " · a full chapter takes a few minutes",
+            color = Faint, fontSize = 13.sp, textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "You can switch apps or lock your phone. Shugyō keeps going and shows its progress in your notifications. " +
+                "If it stops, finished steps are saved and Build picks up from there.",
             color = Faint, fontSize = 13.sp, textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(20.dp))

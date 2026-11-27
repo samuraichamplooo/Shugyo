@@ -38,31 +38,47 @@ object Claude {
         maxTokens: Int,
         quick: Boolean,
         cancelled: () -> Boolean,
-        onText: (String) -> Unit,
-    ) {
+        onStatus: (String) -> Unit,
+        onChars: (Int) -> Unit,
+    ): String {
         if (key.isBlank()) throw AiException("Add your Claude API key in Settings first.")
         val chosen = Prefs.current.claudeModel.ifBlank { models.first().first }
         val order = listOf(chosen) + models.map { it.first }.filter { it != chosen }
         var detail = ""
-        for (model in order) {
-            if (cancelled()) return
-            var r = attempt(key.trim(), model, system, user, images, maxTokens, cancelled, onText, quick)
-            if (r is Result.Plainer) r = attempt(key.trim(), model, system, user, images, maxTokens, cancelled, onText, false)
+        var drops = 0
+        var salvage = ""
+        var i = 0
+        while (i < order.size) {
+            val model = order[i]
+            if (cancelled()) return ""
+            var r = attempt(key.trim(), model, system, user, images, maxTokens, cancelled, onChars, quick)
+            if (r is Result.Plainer) r = attempt(key.trim(), model, system, user, images, maxTokens, cancelled, onChars, false)
             when (r) {
-                Result.Ok -> {
+                is Result.Ok -> {
                     lastModel = model
-                    return
+                    return r.text
+                }
+                is Result.Dropped -> {
+                    // Lost the connection: wait for it and ask the same model again.
+                    if (r.text.length > salvage.length) salvage = r.text
+                    drops++
+                    if (drops > 3) return salvage.ifEmpty { throw AiException("Your phone lost its internet connection while talking to Claude.") }
+                    onStatus("Waiting for internet…")
+                    if (!Net.waitOnline(120_000, cancelled)) throw AiException("Your phone lost its internet connection while talking to Claude.")
+                    continue
                 }
                 is Result.TryNext -> detail = r.why
                 is Result.Fail -> throw AiException(r.why)
                 Result.Plainer -> detail = "$model didn't accept the request"
             }
+            i++
         }
         throw AiException("Claude couldn't answer: $detail")
     }
 
     private sealed interface Result {
-        data object Ok : Result
+        data class Ok(val text: String) : Result
+        data class Dropped(val text: String) : Result
         data class TryNext(val why: String) : Result
         data class Fail(val why: String) : Result
         data object Plainer : Result
@@ -76,7 +92,7 @@ object Claude {
         images: List<AiImage>,
         maxTokens: Int,
         cancelled: () -> Boolean,
-        onText: (String) -> Unit,
+        onChars: (Int) -> Unit,
         quick: Boolean,
     ): Result {
         val content = JSONArray()
@@ -102,13 +118,13 @@ object Claude {
         val conn = (URL(URL_MESSAGES).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = 20_000
-            readTimeout = 120_000
+            readTimeout = 180_000
             doOutput = true
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("Authorization", "Bearer $key")
             setRequestProperty("anthropic-version", "2026-10-21")
         }
-        var produced = false
+        val sb = StringBuilder()
         try {
             conn.outputStream.use { it.write(body.toString().toByteArray()) }
             val code = conn.responseCode
@@ -134,7 +150,7 @@ object Claude {
             }
             BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { reader ->
                 while (true) {
-                    if (cancelled()) return Result.Ok
+                    if (cancelled()) return Result.Ok(sb.toString())
                     val line = reader.readLine() ?: break
                     if (!line.startsWith("data:")) continue
                     val data = line.removePrefix("data:").trim()
@@ -150,25 +166,25 @@ object Claude {
                             if (delta.optString("type") == "text_delta") {
                                 val t = delta.optString("text")
                                 if (t.isNotEmpty()) {
-                                    produced = true
-                                    onText(t)
+                                    sb.append(t)
+                                    onChars(sb.length)
                                 }
                             }
                         }
                         "error" -> {
                             val m = ev.optJSONObject("error")?.optString("message").orEmpty()
-                            if (!produced) return Result.Fail("Claude: ${m.ifBlank { "something went wrong" }}")
-                            return Result.Ok
+                            if (sb.isEmpty()) return Result.Fail("Claude: ${m.ifBlank { "something went wrong" }}")
+                            return Result.Dropped(sb.toString())
                         }
-                        "message_stop" -> return Result.Ok
+                        "message_stop" -> return Result.Ok(sb.toString())
                     }
                 }
             }
-            return if (produced) Result.Ok else Result.Fail("Claude answered with nothing.")
+            return if (sb.isNotEmpty()) Result.Ok(sb.toString()) else Result.Fail("Claude answered with nothing.")
         } catch (e: SocketTimeoutException) {
-            return if (produced) Result.Ok else Result.Fail("Claude took too long to answer.")
+            return if (sb.isNotEmpty()) Result.Dropped(sb.toString()) else Result.Fail("Claude took too long to answer.")
         } catch (e: IOException) {
-            return if (produced) Result.Ok else Result.Fail("Couldn't reach Claude (${e.javaClass.simpleName}).")
+            return Result.Dropped(sb.toString())
         }
     }
 }

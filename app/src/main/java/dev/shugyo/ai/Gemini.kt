@@ -9,22 +9,28 @@ import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.IOException
 import java.io.InputStreamReader
+import java.net.ConnectException
 import java.net.HttpURLConnection
+import java.net.NoRouteToHostException
 import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.UnknownHostException
+import javax.net.ssl.SSLException
 
 class GeminiException(message: String) : AiException(message)
 
 /**
  * Google's Gemini API with your own key (free from Google AI Studio). Replies are streamed.
  *
- * The free tier is often "overloaded" (HTTP 503) or out of quota for one model (429) while
- * another model still works, so this retries and falls back through several free models.
+ * The free tier is often "overloaded" (HTTP 503) or out of quota for one model (429) while another
+ * model still works, so this retries and falls back through several free models. When the phone loses
+ * internet part-way, it waits for the connection to come back and asks again.
  */
 object Gemini {
     private const val TAG = "Gemini"
     private const val BASE = "https://generativelanguage.googleapis.com/v1beta/models/"
+    private const val OFFLINE =
+        "Your phone lost its internet connection while talking to Gemini (or this Wi-Fi blocks Google)."
 
     // Model names change often: "latest" aliases plus recent fixed names, Flash first, then Flash-Lite.
     private val models = listOf(
@@ -33,7 +39,10 @@ object Gemini {
     )
 
     private sealed interface Result {
-        data object Ok : Result
+        data class Ok(val text: String) : Result
+        /** The connection dropped after part of the answer arrived. */
+        data class Broken(val text: String, val detail: String) : Result
+        data class Offline(val detail: String) : Result
         data object NotFound : Result
         data object BadConfig : Result
         data class Busy(val detail: String) : Result
@@ -47,7 +56,10 @@ object Gemini {
     var lastModel: String = ""
         private set
 
-    /** Streams a reply into [onText]. Blocking: call from a background thread. */
+    /**
+     * Returns the whole reply. [onChars] hears how much has arrived so far. Blocking: call from a
+     * background thread. Returns "" if [cancelled].
+     */
     fun stream(
         key: String,
         system: String,
@@ -59,8 +71,8 @@ object Gemini {
         cancelled: () -> Boolean,
         timeBudgetMs: Long,
         onStatus: (String) -> Unit,
-        onText: (String) -> Unit,
-    ) {
+        onChars: (Int) -> Unit,
+    ): String {
         if (key.isBlank()) throw GeminiException("Add your free Gemini API key in Settings first.")
         val deadline = SystemClock.elapsedRealtime() + timeBudgetMs
         val saved = Prefs.current.geminiModel
@@ -68,21 +80,43 @@ object Gemini {
         val firstLevel = if (quick) "minimal" else "low"
         var busy = 0
         var quota = 0
+        var offline = 0
+        var broken = 0
         var lastDetail = ""
+        var salvage = ""
         for ((mi, model) in order.withIndex()) {
             var level: String? = if (levels.containsKey(model)) levels[model]?.ifEmpty { null } else firstLevel
             var tries = 0
             while (tries < 3) {
-                if (cancelled()) return
+                if (cancelled()) return ""
                 if (SystemClock.elapsedRealtime() > deadline) break
                 tries++
-                val r = attempt(key.trim(), model, level, system, user, images, maxTokens, json, cancelled, onText)
-                when (r) {
-                    Result.Ok -> {
+                when (val r = attempt(key.trim(), model, level, system, user, images, maxTokens, json, cancelled, onChars)) {
+                    is Result.Ok -> {
                         levels[model] = level ?: ""
                         lastModel = model
                         if (model != saved) Prefs.update { it.copy(geminiModel = model) }
-                        return
+                        return r.text
+                    }
+                    is Result.Broken -> {
+                        // A cut-off explanation is still worth showing; a cut-off study set is asked for again.
+                        if (r.text.length > salvage.length) salvage = r.text
+                        lastDetail = r.detail
+                        if (!json) return r.text
+                        broken++
+                        if (broken > 2) return salvage
+                        onStatus("The connection dropped. Asking again…")
+                        if (!Net.waitOnline(120_000, cancelled)) throw GeminiException(OFFLINE)
+                        tries--
+                    }
+                    is Result.Offline -> {
+                        offline++
+                        lastDetail = r.detail
+                        if (offline > 4) throw GeminiException("$OFFLINE ($lastDetail)")
+                        onStatus("Waiting for internet…")
+                        if (!Net.waitOnline(120_000, cancelled)) throw GeminiException(OFFLINE)
+                        Thread.sleep(1500)
+                        tries--
                     }
                     Result.NotFound -> break
                     Result.BadConfig -> {
@@ -103,19 +137,21 @@ object Gemini {
                         lastDetail = r.detail
                         if (tries >= 2) break
                         onStatus("Gemini is busy, trying again…")
-                        Thread.sleep(1500)
+                        Thread.sleep(2000)
                     }
                 }
             }
             if (SystemClock.elapsedRealtime() > deadline) break
             if (mi < order.size - 1 && (busy > 0 || quota > 0)) onStatus("Gemini is busy, trying another model…")
         }
+        if (salvage.isNotEmpty()) return salvage
         val why = if (lastDetail.isNotBlank()) " ($lastDetail)" else ""
         throw GeminiException(
             when {
                 busy > 0 && quota == 0 -> "Google's free Gemini models are overloaded right now. Try again in a minute.$why"
                 quota > 0 && busy == 0 -> "Your free Gemini limit is used up for now. It resets daily.$why"
                 busy > 0 -> "Gemini is busy and some free limits are used up. Try again in a minute.$why"
+                SystemClock.elapsedRealtime() > deadline -> "Gemini took too long to answer. Try again.$why"
                 else -> "Gemini didn't accept any of the models Shugyō knows.$why"
             }
         )
@@ -131,7 +167,7 @@ object Gemini {
         maxTokens: Int,
         json: Boolean,
         cancelled: () -> Boolean,
-        onText: (String) -> Unit,
+        onChars: (Int) -> Unit,
     ): Result {
         val parts = JSONArray()
         for (img in images) {
@@ -152,13 +188,13 @@ object Gemini {
             .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
             .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", parts)))
             .put("generationConfig", config)
-        var gotText = false
+        val sb = StringBuilder()
         try {
             val c = URL("$BASE$model:streamGenerateContent?alt=sse").openConnection() as HttpURLConnection
             c.requestMethod = "POST"
             c.doOutput = true
             c.connectTimeout = 20_000
-            c.readTimeout = 120_000
+            c.readTimeout = 180_000
             c.setRequestProperty("Content-Type", "application/json; charset=utf-8")
             c.setRequestProperty("x-goog-api-key", key)
             c.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
@@ -190,7 +226,7 @@ object Gemini {
             }
             BufferedReader(InputStreamReader(c.inputStream, Charsets.UTF_8)).use { reader ->
                 while (true) {
-                    if (cancelled()) return Result.Ok
+                    if (cancelled()) return Result.Ok(sb.toString())
                     val line = reader.readLine() ?: break
                     if (!line.startsWith("data:")) continue
                     val data = line.substring(5).trim()
@@ -202,8 +238,7 @@ object Gemini {
                     }
                     obj.optJSONObject("error")?.let { e ->
                         val detail = "${e.optInt("code")}: ${e.optString("message").take(140)}"
-                        if (!gotText) return Result.Busy(detail)
-                        return Result.Ok
+                        return if (sb.isEmpty()) Result.Busy(detail) else Result.Broken(sb.toString(), detail)
                     }
                     val ps = obj.optJSONArray("candidates")?.optJSONObject(0)
                         ?.optJSONObject("content")?.optJSONArray("parts") ?: continue
@@ -212,21 +247,27 @@ object Gemini {
                         if (p.optBoolean("thought", false)) continue
                         val t = p.optString("text", "")
                         if (t.isNotEmpty()) {
-                            gotText = true
-                            onText(t)
+                            sb.append(t)
+                            onChars(sb.length)
                         }
                     }
                 }
             }
-            return if (gotText) Result.Ok else Result.Busy("empty reply")
+            return if (sb.isNotEmpty()) Result.Ok(sb.toString()) else Result.Busy("empty reply")
         } catch (e: UnknownHostException) {
-            throw GeminiException("Couldn't reach Gemini. Check your internet connection.")
+            return if (sb.isNotEmpty()) Result.Broken(sb.toString(), "no internet") else Result.Offline("no internet")
+        } catch (e: ConnectException) {
+            return if (sb.isNotEmpty()) Result.Broken(sb.toString(), "can't connect") else Result.Offline("can't connect")
+        } catch (e: NoRouteToHostException) {
+            return if (sb.isNotEmpty()) Result.Broken(sb.toString(), "no route") else Result.Offline("no route")
         } catch (e: SocketTimeoutException) {
-            return if (gotText) Result.Ok else Result.Busy("timed out")
+            return if (sb.isNotEmpty()) Result.Broken(sb.toString(), "timed out") else Result.Busy("timed out")
+        } catch (e: SSLException) {
+            return if (sb.isNotEmpty()) Result.Broken(sb.toString(), "secure connection dropped") else Result.Offline("secure connection failed")
         } catch (e: IOException) {
-            if (gotText) return Result.Ok
             Log.w(TAG, "connection problem with $model", e)
-            return Result.Busy(e.javaClass.simpleName)
+            if (sb.isNotEmpty()) return Result.Broken(sb.toString(), e.javaClass.simpleName)
+            return if (Net.online()) Result.Busy(e.javaClass.simpleName) else Result.Offline(e.javaClass.simpleName)
         }
     }
 }

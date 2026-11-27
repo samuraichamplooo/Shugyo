@@ -59,49 +59,69 @@ object Builder {
         val parts = plan(pages, snaps, allImages)
         if (parts.isEmpty()) throw AiException("There's nothing to build from yet. Scan a page first.")
 
+        // Two steps per part (notes, then questions). Each finished step is saved, so if the build
+        // stops (no internet, busy servers) the next try picks up where it left off.
+        val steps = parts.size * 2
+        var stepsDone = 0
+        val used = ArrayList<File>()
         val results = ArrayList<JSONObject>()
-        var lastError: Exception? = null
+        val perObjective = Prefs.current.questionsPerObjective
         for ((i, part) in parts.withIndex()) {
             if (cancelled()) throw CancellationException("cancelled")
             val base = i.toFloat() / parts.size
             val share = 1f / parts.size
             val partName = if (parts.size > 1) "part ${i + 1} of ${parts.size}" else "your pages"
+
+            // Step 1: notes, from the text and pictures.
             onUpdate("Reading $partName…", base + share * 0.02f)
             val images = part.images.mapNotNull { img -> Images.forAi(img.file)?.let { AiImage(img.id, it) } } +
                 part.snaps.mapNotNull { s -> Images.forAi(s.file, 2000)?.let { AiImage(s.label, it) } }
-            val user = Prompts.buildUser(
-                part.text, part.snaps.map { it.label }, i + 1, parts.size, titleHint, subjectHint,
-            )
-            val system = Prompts.build(Prefs.current.questionsPerObjective)
-            var obj: JSONObject? = null
-            for (attempt in 1..2) {
-                try {
-                    val raw = Ai.ask(
-                        system, user, images, maxTokens = 32_000, json = true, quick = false,
-                        cancelled = cancelled,
-                        onStatus = { onUpdate(it, base + share * 0.05f) },
-                        onProgress = { chars ->
-                            val f = min(0.97f, chars / 26_000f)
-                            onUpdate(writingLine(chars, partName), base + share * (0.05f + 0.9f * f))
-                        },
-                    )
-                    obj = JsonFix.parse(raw)
-                    if (obj != null) break
-                    Log.w(TAG, "unreadable JSON (${raw.length} chars): ${raw.take(300)}")
-                    onUpdate("That answer came out garbled. Asking again…", base + share * 0.05f)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    lastError = e
-                    Log.w(TAG, "part ${i + 1} failed", e)
-                    break
-                }
+            val notesSystem = Prompts.notes()
+            val notesUser = Prompts.buildUser(part.text, part.snaps.map { it.label }, i + 1, parts.size, titleHint, subjectHint)
+            val notes = try {
+                step(
+                    "n", notesSystem, notesUser, images, 24_000, cancelled, used,
+                    onStatus = { onUpdate(it, base + share * 0.05f) },
+                    onChars = { chars ->
+                        val f = min(0.97f, chars / 16_000f)
+                        onUpdate(writingLine(chars, partName, false), base + share * (0.05f + 0.5f * f))
+                    },
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                throw stopped(e, stepsDone, steps)
             }
-            if (obj != null) results.add(obj)
+            stepsDone++
+            if (notes == null) {
+                // Garbled twice: skip this part rather than getting stuck on it.
+                stepsDone++
+                continue
+            }
+
+            // Step 2: questions, from the notes and the text (no pictures needed, so it's quicker).
+            onUpdate("Writing practice questions for $partName…", base + share * 0.57f)
+            val questions = try {
+                step(
+                    "q", Prompts.questions(perObjective),
+                    Prompts.questionsUser(compactNotes(notes), part.text, i + 1, parts.size),
+                    emptyList(), 16_000, cancelled, used,
+                    onStatus = { onUpdate(it, base + share * 0.6f) },
+                    onChars = { chars ->
+                        val f = min(0.97f, chars / 12_000f)
+                        onUpdate(writingLine(chars, partName, true), base + share * (0.6f + 0.38f * f))
+                    },
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                throw stopped(e, stepsDone, steps)
+            }
+            stepsDone++
+            notes.put("questions", questions?.optJSONArray("questions") ?: org.json.JSONArray())
+            results.add(notes)
         }
-        if (results.isEmpty()) {
-            throw AiException(lastError?.message ?: "The AI's answer couldn't be read. Try building again.")
-        }
+        if (results.isEmpty()) throw AiException("The AI's answers couldn't be read. Try building again.")
         onUpdate("Saving your study set…", 0.98f)
         val existing = intoDeckId?.let { Store.deck(it) }
         val id = existing?.id ?: Store.newId()
@@ -110,22 +130,110 @@ object Builder {
         val fresh = merge(id, results, pages, snaps, allImages, titleHint, subjectHint, prefix)
         val deck = if (existing != null) append(existing, fresh) else fresh
         Store.save(deck)
+        used.forEach { it.delete() }
         onUpdate("Done!", 1f)
         deck
     }
 
-    private fun writingLine(chars: Int, partName: String): String {
-        val lines = listOf(
+    /** Saved answers of finished steps, kept until the set is built. */
+    private val cacheDir: File by lazy { File(dev.shugyo.App.instance.filesDir, "aicache").apply { mkdirs() } }
+
+    private fun cacheKey(kind: String, system: String, user: String, images: List<AiImage>): String {
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        md.update(kind.toByteArray())
+        md.update(system.toByteArray())
+        md.update(user.toByteArray())
+        images.forEach { md.update(it.label.toByteArray()); md.update(it.jpeg.size.toString().toByteArray()) }
+        return md.digest().take(16).joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * One AI request, reusing a saved answer when this exact step already finished before.
+     * Null if the answer came out unreadable twice.
+     */
+    private suspend fun step(
+        kind: String,
+        system: String,
+        user: String,
+        images: List<AiImage>,
+        maxTokens: Int,
+        cancelled: () -> Boolean,
+        used: MutableList<File>,
+        onStatus: (String) -> Unit,
+        onChars: (Int) -> Unit,
+    ): JSONObject? {
+        val file = File(cacheDir, "${cacheKey(kind, system, user, images)}.json")
+        used.add(file)
+        if (file.exists()) {
+            JsonFix.parse(file.readText())?.let {
+                onStatus("Already done earlier, reusing it…")
+                return it
+            }
+        }
+        for (attempt in 1..2) {
+            val raw = Ai.ask(
+                system, user, images, maxTokens = maxTokens, json = true, quick = false,
+                cancelled = cancelled, onStatus = onStatus, onProgress = onChars,
+            )
+            val obj = JsonFix.parse(raw)
+            if (obj != null) {
+                try {
+                    file.writeText(obj.toString())
+                } catch (e: Exception) {
+                    Log.w(TAG, "couldn't save step", e)
+                }
+                return obj
+            }
+            Log.w(TAG, "unreadable JSON (${raw.length} chars): ${raw.take(300)}")
+            onStatus("That answer came out garbled. Asking again…")
+        }
+        return null
+    }
+
+    /** The error to show when a build stops part-way, saying that finished steps are kept. */
+    private fun stopped(e: Exception, done: Int, total: Int): AiException {
+        val why = e.message ?: "The AI didn't answer."
+        return AiException(
+            if (done > 0) "$why\n\n$done of $total steps are saved. Tap Build again to continue from there."
+            else why
+        )
+    }
+
+    /** The notes, shortened to what the question writer needs. */
+    private fun compactNotes(notes: JSONObject): String {
+        val o = JSONObject()
+        o.put("objectives", org.json.JSONArray(objects(notes.optJSONArray("objectives")).map {
+            JSONObject().put("id", it.str("id")).put("text", it.str("text")).put("explain", it.str("explain"))
+        }))
+        o.put("terms", org.json.JSONArray(objects(notes.optJSONArray("terms")).map {
+            JSONObject().put("id", it.str("id")).put("term", it.str("term")).put("definition", it.str("definition"))
+                .put("objective", it.str("objective"))
+        }))
+        o.put("tables", org.json.JSONArray(objects(notes.optJSONArray("tables")).map {
+            JSONObject().put("title", it.str("title")).put("headers", it.optJSONArray("headers")).put("rows", it.optJSONArray("rows"))
+        }))
+        o.put("figures", org.json.JSONArray(objects(notes.optJSONArray("figures")).map {
+            JSONObject().put("caption", it.str("caption")).put("explain", it.str("explain"))
+        }))
+        return o.toString()
+    }
+
+    private fun writingLine(chars: Int, partName: String, questions: Boolean): String {
+        val lines = if (questions) listOf(
+            "Writing practice questions",
+            "Making believable wrong answers",
+            "Adding hints",
+            "Writing scenario questions",
+            "Sharpening the tricky answers",
+        ) else listOf(
             "Finding the learning objectives",
             "Pulling out key terms",
             "Making hard ideas simple",
             "Inventing memory tricks",
             "Copying the tables",
             "Studying the diagrams",
-            "Writing practice questions",
-            "Sharpening the tricky answers",
         )
-        val step = (chars / 3500).coerceIn(0, lines.size - 1)
+        val step = (chars / 3000).coerceIn(0, lines.size - 1)
         val k = chars / 1000
         return "${lines[step]}… ($partName · ${k}k characters)"
     }
