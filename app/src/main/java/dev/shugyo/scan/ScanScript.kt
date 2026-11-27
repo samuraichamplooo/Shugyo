@@ -18,8 +18,9 @@ object ScanScript {
   var BLOCK_TAGS = {P:1, DIV:1, SECTION:1, ARTICLE:1, MAIN:1, ASIDE:1, HEADER:1, UL:1, OL:1, LI:1, DL:1, DT:1,
     DD:1, BLOCKQUOTE:1, FIGURE:1, FIGCAPTION:1, TABLE:1, H1:1, H2:1, H3:1, H4:1, H5:1, H6:1, IMG:1, CANVAS:1,
     PRE:1, HR:1, BODY:1, CENTER:1, DETAILS:1, SUMMARY:1, PICTURE:1};
-  var MAX_TEXT = 350000, MAX_IMG = 30;
-  var out, imgs, textLen, imgCount, seenImg;
+  var MAX_TEXT = 350000, MAX_IMG = 30, MAX_GLOSS = 60;
+  var GLOSS_RE = /gloss|key-?term|keyword|defin|vocab|term-?link|termref|popover|tooltip/i;
+  var out, imgs, textLen, imgCount, seenImg, gloss, glossEls, glossSeen;
 
   function clean(s) { return (s || '').replace(/\s+/g, ' ').trim(); }
   function cls(el) { var c = el.className; return typeof c === 'string' ? c : ((c && c.baseVal) || ''); }
@@ -29,6 +30,8 @@ object ScanScript {
     return !st || st.display === 'none' || st.visibility === 'hidden';
   }
   function skip(el) {
+    // A linked key term can be a button; everything else that's a button is page chrome.
+    if (el.tagName === 'BUTTON' && isGloss(el)) return hidden(el);
     if (SKIP_TAGS[el.tagName]) return true;
     var role = el.getAttribute && el.getAttribute('role');
     if (role && SKIP_ROLES[role]) return true;
@@ -39,6 +42,63 @@ object ScanScript {
     if (t === 'B' || t === 'STRONG' || t === 'DFN') return true;
     return /key-?term|glossterm|gloss-term|keyword|boldterm|term-def/i.test(cls(el));
   }
+  // A linked key term whose definition pops up when tapped.
+  function isGloss(el) {
+    var tag = el.tagName, role = el.getAttribute('role');
+    var clickable = tag === 'A' || tag === 'BUTTON' || role === 'button' || role === 'link' ||
+      el.hasAttribute('tabindex') || el.hasAttribute('onclick');
+    if (!clickable) return false;
+    var txt = clean(el.textContent);
+    if (txt.length < 2 || txt.length > 60 || txt.split(' ').length > 6) return false;
+    if (/^(fig(ure)?|table|section|chapter|page|see)\b/i.test(txt)) return false;
+    var attrs = cls(el) + ' ' + (el.id || '') + ' ' + ['href', 'data-type', 'data-term', 'data-glossary',
+      'aria-describedby', 'aria-controls', 'epub:type', 'data-toggle', 'data-bs-toggle'].map(function (a) {
+      return el.getAttribute(a) || '';
+    }).join(' ');
+    if (GLOSS_RE.test(attrs) || el.hasAttribute('data-term') || el.hasAttribute('data-glossary') ||
+      el.hasAttribute('aria-haspopup')) return true;
+    var fw = parseInt(window.getComputedStyle(el).fontWeight, 10) || 400;
+    var p = el.parentElement;
+    return fw >= 600 && !!p && clean(p.textContent).length > txt.length + 40;
+  }
+  // A definition the page already holds: in an attribute, or in an element the term points to.
+  function staticDef(el, term) {
+    var c = [el.getAttribute('title'), el.getAttribute('data-definition'), el.getAttribute('data-content'),
+      el.getAttribute('data-original-title'), el.getAttribute('data-tooltip'), el.getAttribute('data-tippy-content'),
+      el.getAttribute('aria-description'), el.getAttribute('aria-label')];
+    var ids = ((el.getAttribute('aria-describedby') || '') + ' ' + (el.getAttribute('aria-controls') || '')).split(/\s+/);
+    var href = el.getAttribute('href') || '';
+    if (href.charAt(0) === '#' && href.length > 1 && href.charAt(1) !== '/') ids.push(href.slice(1));
+    for (var i = 0; i < ids.length; i++) {
+      if (!ids[i]) continue;
+      var d = null;
+      try { d = document.getElementById(ids[i]); } catch (e) {}
+      if (d && !d.contains(el)) c.push(d.textContent);
+    }
+    for (var j = 0; j < c.length; j++) {
+      var v = clean(c[j]);
+      if (v && v.length > term.length + 8 && !/opens? in|new window|click|tap to/i.test(v)) return v.slice(0, 900);
+    }
+    return '';
+  }
+  function noteGloss(el) {
+    var term = clean(el.textContent);
+    var key = term.toLowerCase();
+    if (glossSeen[key] || gloss.length >= MAX_GLOSS) return;
+    glossSeen[key] = 1;
+    var def = staticDef(el, term);
+    gloss.push({t: term, d: def});
+    if (!def) glossEls.push({el: el, t: term});
+  }
+  function mark(n, t) {
+    var c = clean(t);
+    if (isGloss(n)) {
+      noteGloss(n);
+      if (c.length > 1) return ' **' + c + '** ';
+    }
+    if (isKey(n) && c.length > 1 && c.length < 90) return ' **' + c + '** ';
+    return t;
+  }
   function inline(el) {
     var s = '';
     var kids = el.childNodes;
@@ -48,12 +108,7 @@ object ScanScript {
       if (n.nodeType !== 1) continue;
       if (n.tagName === 'BR') { s += ' '; continue; }
       if (n.tagName === 'IMG' || skip(n)) continue;
-      var t = inline(n);
-      if (isKey(n)) {
-        var c = clean(t);
-        if (c.length > 1 && c.length < 90) { s += ' **' + c + '** '; continue; }
-      }
-      s += t;
+      s += mark(n, inline(n));
     }
     return s;
   }
@@ -159,11 +214,7 @@ object ScanScript {
       if (n.nodeType !== 1) continue;
       if (!BLOCK_TAGS[n.tagName] && !n.shadowRoot && !hasBlock(n)) {
         if (n.tagName === 'BR') { buf += ' '; continue; }
-        if (!skip(n)) {
-          var t = inline(n);
-          if (isKey(n)) { var c = clean(t); if (c.length > 1 && c.length < 90) t = ' **' + c + '** '; }
-          buf += t;
-        }
+        if (!skip(n)) buf += mark(n, inline(n));
         continue;
       }
       if (buf.trim()) push('p', buf);
@@ -187,11 +238,130 @@ object ScanScript {
 
   window.__shugyoScan = function () {
     out = []; imgs = []; textLen = 0; imgCount = 0; seenImg = {};
+    gloss = []; glossEls = []; glossSeen = {};
     walk(pickRoot());
+    window.__shugyoGlossEls = glossEls;
     var words = 0;
     for (var i = 0; i < out.length; i++) if (out[i].k !== 'img') words += out[i].t.split(' ').length;
     return {url: location.href, title: document.title, top: window === window.top,
-            blocks: out, images: imgs, words: words};
+            blocks: out, images: imgs, words: words, gloss: gloss, glossPending: glossEls.length};
+  };
+
+  // ---- Pop-up definitions: tap each linked term, read what pops up, close it.
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  var POPUP = '[role=dialog],[role=tooltip],[role=alertdialog],[aria-modal=true],.popover,.tooltip,.modal,.tippy-box,' +
+    '[class*=popover],[class*=Popover],[class*=tooltip],[class*=Tooltip],[class*=glossary],[class*=Glossary],' +
+    '[class*=definition],[class*=Definition],[class*=flyout],[class*=Flyout],[class*=popup],[class*=Popup],[class*=modal],[class*=Modal]';
+  function shown(el) {
+    if (!el || !el.isConnected) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) return false;
+    var s = window.getComputedStyle(el);
+    return s.visibility !== 'hidden' && s.display !== 'none' && parseFloat(s.opacity || '1') > 0.05;
+  }
+  function textIn(el) { return clean(el.innerText || el.textContent || ''); }
+  function popupsShown() {
+    var list = [], all = document.querySelectorAll(POPUP);
+    for (var i = 0; i < all.length; i++) if (shown(all[i])) list.push(all[i]);
+    return list;
+  }
+  function pick(before, added, trigger, term) {
+    var cands = popupsShown().filter(function (p) { return before.indexOf(p) < 0; });
+    for (var i = 0; i < added.length; i++) {
+      var a = added[i];
+      if (a.nodeType !== 1) continue;
+      cands.push(a);
+      var up = a.closest ? a.closest(POPUP) : null;
+      if (up) cands.push(up);
+    }
+    var best = null, bestScore = -1, low = term.toLowerCase();
+    for (var j = 0; j < cands.length; j++) {
+      var c = cands[j];
+      if (c === trigger || c.contains(trigger) || trigger.contains(c) || !shown(c)) continue;
+      var tx = textIn(c);
+      if (tx.length < term.length + 10 || tx.length > 2500) continue;
+      var score = (tx.toLowerCase().indexOf(low) >= 0 ? 50 : 0) + (c.matches && c.matches(POPUP) ? 30 : 0) +
+        Math.min(tx.length, 400) / 40;
+      if (score > bestScore) { best = c; bestScore = score; }
+    }
+    return best;
+  }
+  function tidy(text, term) {
+    var t = text;
+    var low = term.toLowerCase();
+    for (var k = 0; k < 4; k++) {
+      t = t.replace(/^(glossary|definition|key term|close|done|ok|\u00d7|x)\b[\s:.-]*/i, '');
+      if (t.toLowerCase().indexOf(low) === 0) t = t.slice(term.length).replace(/^[\s:.,\u2013\u2014-]+/, '');
+    }
+    t = t.replace(/[\s]*(close|\u00d7|done|ok)$/i, '');
+    return t.trim().slice(0, 900);
+  }
+  async function closePopup(p, trigger) {
+    var btn = p.querySelector('button[aria-label*="lose" i], button[title*="lose" i], [data-dismiss], [data-bs-dismiss], ' +
+      '.close, .btn-close, button[class*=close i], [role=button][aria-label*="lose" i]');
+    if (btn) { btn.click(); await sleep(250); if (!shown(p)) return; }
+    var esc = {key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true};
+    try {
+      (document.activeElement || document.body).dispatchEvent(new KeyboardEvent('keydown', esc));
+      document.dispatchEvent(new KeyboardEvent('keydown', esc));
+    } catch (e) {}
+    await sleep(250);
+    if (!shown(p)) return;
+    trigger.click();
+    await sleep(250);
+    if (!shown(p)) return;
+    try {
+      document.body.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+      document.body.dispatchEvent(new MouseEvent('click', {bubbles: true}));
+    } catch (e) {}
+    await sleep(200);
+  }
+  async function readOne(item) {
+    var el = item.el, term = item.t;
+    if (!el.isConnected) return '';
+    var before = popupsShown(), added = [];
+    var mo = new MutationObserver(function (ms) {
+      ms.forEach(function (m) {
+        if (m.type === 'attributes') added.push(m.target);
+        else m.addedNodes.forEach(function (n) { if (n.nodeType === 1) added.push(n); });
+      });
+    });
+    mo.observe(document.body, {childList: true, subtree: true, attributes: true,
+      attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'open']});
+    try { el.scrollIntoView({block: 'center'}); } catch (e) {}
+    el.click();
+    var found = null;
+    for (var w = 0; w < 15 && !found; w++) {
+      await sleep(100);
+      found = pick(before, added, el, term);
+    }
+    if (found) await sleep(150);   // let it finish filling in
+    mo.disconnect();
+    var text = found ? tidy(textIn(found), term) : '';
+    if (found) await closePopup(found, el);
+    return text;
+  }
+  window.__shugyoDefs = async function (report) {
+    var items = window.__shugyoGlossEls || [];
+    var out = [];
+    var y = window.scrollY;
+    var block = function (e) {
+      var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+      if (a) e.preventDefault();   // read the pop-up, don't leave the page
+    };
+    document.addEventListener('click', block, true);
+    try {
+      for (var i = 0; i < items.length; i++) {
+        if (report) report(i, items.length);
+        var d = '';
+        try { d = await readOne(items[i]); } catch (e) {}
+        if (d && d.length > 6) out.push({t: items[i].t, d: d});
+      }
+    } finally {
+      document.removeEventListener('click', block, true);
+      try { window.scrollTo(0, y); } catch (e) {}
+    }
+    return out;
   };
 
   window.__shugyoScroll = function () {
@@ -226,6 +396,16 @@ object ScanScript {
     b.onmessage = function (e) {
       var cmd = e.data, reply;
       try {
+        if (cmd === 'defs') {
+          window.__shugyoDefs(function (done, total) {
+            b.postMessage(JSON.stringify({kind: 'progress', done: done, total: total}));
+          }).then(function (list) {
+            b.postMessage(JSON.stringify({kind: 'defs', data: list}));
+          }, function (err) {
+            b.postMessage(JSON.stringify({kind: 'defs', data: [], error: String(err)}));
+          });
+          return;
+        }
         if (cmd === 'scan') reply = {kind: 'scan', data: window.__shugyoScan()};
         else if (cmd === 'scroll') reply = {kind: 'scroll', moved: window.__shugyoScroll()};
         else return;

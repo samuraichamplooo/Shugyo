@@ -50,6 +50,8 @@ object Builder {
         subjectHint: String,
         onUpdate: (status: String, fraction: Float) -> Unit,
         cancelled: () -> Boolean,
+        /** Add the new pages to this study set instead of making a new one. */
+        intoDeckId: String? = null,
     ): Deck = withContext(Dispatchers.IO) {
         val pages = items.filterIsInstance<BasketItem.Page>()
         val snaps = items.filterIsInstance<BasketItem.Snap>()
@@ -101,8 +103,12 @@ object Builder {
             throw AiException(lastError?.message ?: "The AI's answer couldn't be read. Try building again.")
         }
         onUpdate("Saving your study set…", 0.98f)
-        val id = Store.newId()
-        val deck = merge(id, results, pages, snaps, allImages, titleHint, subjectHint)
+        val existing = intoDeckId?.let { Store.deck(it) }
+        val id = existing?.id ?: Store.newId()
+        // New ids get their own prefix when added to an existing set, so nothing clashes with what's there.
+        val prefix = if (existing != null) "x" + System.currentTimeMillis().toString(36).takeLast(5) + "_" else ""
+        val fresh = merge(id, results, pages, snaps, allImages, titleHint, subjectHint, prefix)
+        val deck = if (existing != null) append(existing, fresh) else fresh
         Store.save(deck)
         onUpdate("Done!", 1f)
         deck
@@ -172,6 +178,7 @@ object Builder {
         allImages: Map<String, PageImage>,
         titleHint: String,
         subjectHint: String,
+        idPrefix: String = "",
     ): Deck {
         var title = ""
         var subject = ""
@@ -188,7 +195,7 @@ object Builder {
         val dir = Store.dir(deckId)
 
         for ((pi, o) in results.withIndex()) {
-            val prefix = if (results.size > 1) "p${pi + 1}_" else ""
+            val prefix = idPrefix + if (results.size > 1) "p${pi + 1}_" else ""
             val remap = HashMap<String, String>()
             fun id(raw: String, kind: String, n: Int): String {
                 val r = raw.ifBlank { "$kind$n" }
@@ -289,7 +296,7 @@ object Builder {
         }
         if (objectives.isEmpty()) {
             sections.forEachIndexed { i, s ->
-                objectives.add(Objective("o${i + 1}", "Explain: ${s.title}", s.summary, s.points.joinToString(" "), emptyList()))
+                objectives.add(Objective("${idPrefix}o${i + 1}", "Explain: ${s.title}", s.summary, s.points.joinToString(" "), emptyList()))
             }
         }
         val termObjective = fixedTerms.associate { it.id to it.objective }
@@ -312,6 +319,28 @@ object Builder {
             tables = unique(tables, { it.id }) { t, id -> t.copy(id = id) },
             figures = figures,
             questions = unique(fixedQuestions, { it.id }) { q, id -> q.copy(id = id) },
+        )
+    }
+
+    /** A new part of a chapter added to a set you already have. Terms it already has aren't repeated. */
+    private fun append(old: Deck, add: Deck): Deck {
+        fun norm(s: String) = s.lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
+        val byName = old.terms.associateBy { norm(it.term) }
+        val same = HashMap<String, String>()
+        val newTerms = add.terms.filter { t ->
+            val match = byName[norm(t.term)]
+            if (match != null) same[t.id] = match.id
+            match == null
+        }
+        fun tid(x: String) = same[x] ?: x
+        return old.copy(
+            overview = listOf(old.overview, add.overview).filter { it.isNotBlank() }.joinToString(" "),
+            sections = old.sections + add.sections,
+            objectives = old.objectives + add.objectives.map { o -> o.copy(terms = o.terms.map { tid(it) }) },
+            terms = old.terms + newTerms,
+            tables = old.tables + add.tables,
+            figures = old.figures + add.figures,
+            questions = old.questions + add.questions.map { q -> q.copy(term = tid(q.term)) },
         )
     }
 

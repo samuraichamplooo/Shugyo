@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -68,6 +69,9 @@ fun BuildScreen() {
     val settings by Prefs.settings.collectAsState()
     var title by remember { mutableStateOf("") }
     var subject by remember { mutableStateOf(Store.subjects().firstOrNull().orEmpty()) }
+    val decks by Store.decks.collectAsState()
+    var target by remember { mutableStateOf<String?>(null) }   // null: a new study set
+    val targetDeck = decks.firstOrNull { it.id == target }
     val importers = rememberImporters(onAdded = {})
 
     LaunchedEffect(run.doneDeck) {
@@ -123,6 +127,7 @@ fun BuildScreen() {
                                 Pill("${"%,d".format(p.words)} words", LearnColor)
                                 if (p.images.isNotEmpty()) Pill("${p.images.size} pictures", NotesColor)
                                 if (p.tables > 0) Pill("${p.tables} tables", Gold)
+                                if (p.definitions > 0) Pill("${p.definitions} definitions", QuizColor)
                             }
                         }
                         IconButton(onClick = { Basket.remove(p.id) }) { Icon(Icons.Filled.Close, "Remove", tint = Faint) }
@@ -171,7 +176,25 @@ fun BuildScreen() {
                     GhostButton("📋 Paste", importers.paste)
                 }
             }
-            item {
+            if (decks.isNotEmpty()) {
+                item {
+                    SectionLabel("Save to")
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Choice("＋ New study set", target == null) { target = null }
+                        decks.take(20).forEach { d ->
+                            Choice("Add to: ${d.title}", target == d.id) { target = d.id }
+                        }
+                    }
+                    if (targetDeck != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "These pages join \"${targetDeck.title}\" as more objectives, terms and questions. Your progress there is kept.",
+                            color = Faint, fontSize = 13.sp,
+                        )
+                    }
+                }
+            }
+            if (targetDeck == null) item {
                 SectionLabel("About this set")
                 OutlinedTextField(
                     title, { title = it }, singleLine = true,
@@ -191,6 +214,8 @@ fun BuildScreen() {
                         known.forEach { k -> Box(Modifier.clickable { subject = k }) { Pill(k, Faint) } }
                     }
                 }
+            }
+            item {
                 Spacer(Modifier.height(12.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -214,13 +239,26 @@ fun BuildScreen() {
                 BigButton("Open Settings", { Nav.go(Route.Settings) }, Modifier.fillMaxWidth(), color = Gold, textColor = Ink)
             } else {
                 BigButton(
-                    "⚔️ Build my study set",
-                    { BuildRunner.start(items, title, subject) },
+                    if (targetDeck != null) "⚔️ Add to my study set" else "⚔️ Build my study set",
+                    { BuildRunner.start(items, title, subject, target) },
                     Modifier.fillMaxWidth(),
                     enabled = items.isNotEmpty(),
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun Choice(text: String, on: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (on) Seal else CardHigh)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+    ) {
+        Text(text, color = Paper, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 280.dp))
     }
 }
 

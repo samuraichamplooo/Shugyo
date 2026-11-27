@@ -18,6 +18,7 @@ data class Settings(
     val bookmarks: String = "[]",            // JSON: [{"t": title, "u": url}]
     val recent: String = "[]",               // recently visited sites, same shape
     val desktopSite: Boolean = false,        // the browser shows sites' full desktop layout
+    val readPopups: Boolean = true,          // Scan page also taps linked terms to read their pop-up definitions
     // Progress across every study set.
     val xp: Int = 0,
     val streak: Int = 0,
@@ -51,6 +52,7 @@ object Prefs {
             bookmarks = sp.getString("bookmarks", d.bookmarks) ?: d.bookmarks,
             recent = sp.getString("recent", d.recent) ?: d.recent,
             desktopSite = sp.getBoolean("desktopSite", d.desktopSite),
+            readPopups = sp.getBoolean("readPopups", d.readPopups),
             xp = sp.getInt("xp", d.xp),
             streak = sp.getInt("streak", d.streak),
             bestStreak = sp.getInt("bestStreak", d.bestStreak),
@@ -77,6 +79,7 @@ object Prefs {
             .putString("bookmarks", s.bookmarks)
             .putString("recent", s.recent)
             .putBoolean("desktopSite", s.desktopSite)
+            .putBoolean("readPopups", s.readPopups)
             .putInt("xp", s.xp)
             .putInt("streak", s.streak)
             .putInt("bestStreak", s.bestStreak)

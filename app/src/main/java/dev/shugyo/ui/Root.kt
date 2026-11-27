@@ -63,7 +63,7 @@ object BuildRunner {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var job: Job? = null
 
-    fun start(items: List<dev.shugyo.scan.BasketItem>, title: String, subject: String) {
+    fun start(items: List<dev.shugyo.scan.BasketItem>, title: String, subject: String, into: String? = null) {
         if (_state.value.running) return
         _state.value = State(running = true, status = "Getting ready…", fraction = 0.01f)
         job = scope.launch {
@@ -72,6 +72,7 @@ object BuildRunner {
                     items, title, subject,
                     onUpdate = { s, f -> if (_state.value.running) _state.value = _state.value.copy(status = s, fraction = f) },
                     cancelled = { job?.isCancelled == true },
+                    intoDeckId = into,
                 )
                 _state.value = State(doneDeck = deck.id)
             } catch (e: CancellationException) {

@@ -532,6 +532,13 @@ fun BrowserScreen(state: BrowserState) {
                         )
                     }
                     DropdownMenuItem(
+                        text = { Text((if (settings.readPopups) "☑" else "☐") + "  Read pop-up definitions when scanning") },
+                        onClick = {
+                            menu = false
+                            Prefs.update { it.copy(readPopups = !it.readPopups) }
+                        },
+                    )
+                    DropdownMenuItem(
                         text = { Text("🏠  Start page") },
                         onClick = {
                             menu = false
@@ -689,7 +696,7 @@ fun BrowserScreen(state: BrowserState) {
                         val url = t.url
                         val agent = t.webView.settings.userAgentString.orEmpty()
                         val page = try {
-                            val frames = t.scanner.scan()
+                            val frames = t.scanner.scan(Prefs.current.readPopups) { busy = it }
                             withContext(Dispatchers.IO) { Basket.pageFromScan(frames, url, agent) }
                         } catch (e: kotlinx.coroutines.CancellationException) {
                             throw e
@@ -706,7 +713,9 @@ fun BrowserScreen(state: BrowserState) {
                                 "You already scanned this page."
                             else -> {
                                 Basket.addPage(page)
-                                "Added ${"%,d".format(page.words)} words · ${page.images.size} pictures · ${page.tables} tables"
+                                "Added ${"%,d".format(page.words)} words · ${page.images.size} pictures · ${page.tables} tables" +
+                                    (if (page.definitions > 0) " · ${page.definitions} definitions" else "") +
+                                    ". Next page? Open it and scan again."
                             }
                         }
                     }

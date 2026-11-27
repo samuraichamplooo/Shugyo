@@ -29,8 +29,12 @@ import kotlin.coroutines.resume
 class WebScanner(private val webView: WebView) {
     private val tag = "WebScanner"
     private val proxies = CopyOnWriteArrayList<JavaScriptReplyProxy>()
-    private val scans = CopyOnWriteArrayList<JSONObject>()
+    private val scans = CopyOnWriteArrayList<Pair<JavaScriptReplyProxy, JSONObject>>()
     private val scrolls = CopyOnWriteArrayList<Boolean>()
+    private val defs = CopyOnWriteArrayList<JSONArray>()
+
+    @Volatile
+    private var progress: ((Int, Int) -> Unit)? = null
 
     val allFrames = WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) &&
         WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
@@ -63,14 +67,19 @@ class WebScanner(private val webView: WebView) {
             "hello" -> if (proxies.none { it === reply }) proxies.add(reply)
             "scan" -> {
                 if (proxies.none { it === reply }) proxies.add(reply)
-                o.optJSONObject("data")?.let { scans.add(it) }
+                o.optJSONObject("data")?.let { scans.add(reply to it) }
             }
             "scroll" -> scrolls.add(o.optBoolean("moved"))
+            "defs" -> defs.add(o.optJSONArray("data") ?: JSONArray())
+            "progress" -> progress?.invoke(o.optInt("done"), o.optInt("total"))
         }
     }
 
-    /** Reads the page in every frame. Returns one result per frame that answered. */
-    suspend fun scan(): List<JSONObject> {
+    /**
+     * Reads the page in every frame. Returns one result per frame that answered. With [readPopups],
+     * linked key terms whose definitions only show in a pop-up are tapped one by one and read too.
+     */
+    suspend fun scan(readPopups: Boolean = true, onStatus: (String) -> Unit = {}): List<JSONObject> {
         if (allFrames && proxies.isNotEmpty()) {
             scans.clear()
             val asked = withContext(Dispatchers.Main) {
@@ -91,11 +100,66 @@ class WebScanner(private val webView: WebView) {
                 waited += 100
                 if (scans.isNotEmpty() && waited >= 2500) break
             }
-            if (scans.isNotEmpty()) return scans.toList()
+            if (scans.isNotEmpty()) {
+                val results = scans.toList()
+                if (readPopups) readDefinitions(results, onStatus)
+                return results.map { it.second }
+            }
         }
         // Older WebView: the main frame only.
         val raw = evaluate(ScanScript.JS + "\n;JSON.stringify(window.__shugyoScan())")
         return listOfNotNull(decodeJsResult(raw)?.let { s -> try { JSONObject(s) } catch (e: Exception) { null } })
+    }
+
+    private suspend fun readDefinitions(results: List<Pair<JavaScriptReplyProxy, JSONObject>>, onStatus: (String) -> Unit) {
+        val todo = results.filter { it.second.optInt("glossPending") > 0 }
+        if (todo.isEmpty()) return
+        val total = todo.sumOf { it.second.optInt("glossPending") }
+        defs.clear()
+        onStatus("Reading pop-up definitions… 1 of $total")
+        progress = { done, t -> onStatus("Reading pop-up definitions… ${minOf(done + 1, t)} of $t") }
+        withContext(Dispatchers.Main) {
+            todo.forEach { (p, _) ->
+                try {
+                    p.postMessage("defs")
+                } catch (e: Exception) {
+                    // that frame is gone
+                }
+            }
+        }
+        val limit = (6000L + 1800L * total).coerceAtMost(120_000L)
+        var waited = 0L
+        while (waited < limit && defs.size < todo.size) {
+            delay(150)
+            waited += 150
+        }
+        progress = null
+        // Put each definition with its term (matched by name, whichever frame it came from).
+        val all = results.map { it.second }
+        for (arr in defs) {
+            for (i in 0 until arr.length()) {
+                val d = arr.optJSONObject(i) ?: continue
+                val term = d.optString("t")
+                val def = d.optString("d")
+                if (term.isBlank() || def.isBlank()) continue
+                var placed = false
+                for (data in all) {
+                    val g = data.optJSONArray("gloss") ?: continue
+                    for (k in 0 until g.length()) {
+                        val e = g.optJSONObject(k) ?: continue
+                        if (e.optString("t").equals(term, ignoreCase = true) && e.optString("d").isBlank()) {
+                            e.put("d", def)
+                            placed = true
+                        }
+                    }
+                }
+                if (!placed) {
+                    val first = all.first()
+                    val g = first.optJSONArray("gloss") ?: JSONArray().also { first.put("gloss", it) }
+                    g.put(JSONObject().put("t", term).put("d", def))
+                }
+            }
+        }
     }
 
     /** Scrolls the page (or the reader inside it) down by most of a screen. False at the bottom. */

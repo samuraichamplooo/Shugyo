@@ -4,9 +4,9 @@ Your training journey: turn textbook chapters into lessons, flashcards and pract
 
 ## What it does (stage 1)
 
-- **Scan your textbook**: an in-app browser where you sign in to your class site (like Moodle), McGraw Hill or any site. It opens where you left off, has a start page with bookmarks and recent sites, and opens new-window links (like a textbook launched from Moodle) in their own tab. **Scan page** reads the page in every frame, including learning objectives, bold key terms, tables and figures with their captions. For readers that hide their text, **Snap** takes a picture of the screen, and **⋮ → Snap whole page** scrolls and snaps for you.
+- **Scan your textbook**: an in-app browser where you sign in to your class site (like Moodle), McGraw Hill or any site. It opens where you left off, has a start page with bookmarks and recent sites, and opens new-window links (like a textbook launched from Moodle) in their own tab. **Scan page** reads the page in every frame, including learning objectives, bold key terms, tables and figures with their captions. It also taps each linked key term to read the book's pop-up definition (⋮ to turn off). Scan each module's page in turn: scans are kept on the phone until you build, even if the app closes. For readers that hide their text, **Snap** takes a picture of the screen, and **⋮ → Snap whole page** scrolls and snaps for you.
 - **Other ways in**: screenshots or photos, a PDF (pick the pages), pasted text, or share a link, text, pictures or a PDF to Shugyō from any app.
-- **Build a study set**: Gemini (free key) or Claude reads everything and writes:
+- **Build a study set** (or add the pages to one you already have): Gemini (free key) or Claude reads everything and writes:
   - the book's learning objectives, each in plain words with a friendly explanation
   - key terms with the book's definition, a plain-words version, a memory trick and an example
   - tables reproduced with a one-line takeaway
