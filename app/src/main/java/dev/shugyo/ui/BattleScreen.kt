@@ -519,20 +519,20 @@ fun StarterPicker(modifier: Modifier = Modifier, onPicked: () -> Unit = {}) {
                     onClick = { pick = i },
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        CreatureView(s.species, Modifier.size(96.dp))
-                        Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
                             Text("${s.species.name} ${s.species.element.emoji}", color = Paper, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                             Text("${s.animal} · ${s.species.element.label} · ${s.move}", color = s.species.element.main, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             Text(s.blurb, color = Soft, fontSize = 13.sp)
-                            Text("Evolves into ${s.stages[1]}, then ${s.stages[2]}", color = Faint, fontSize = 12.sp)
                         }
                     }
-                    if (on) {
-                        Spacer(Modifier.height(10.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            (1..3).forEach { stg ->
-                                CreatureView(s.species, Modifier.size(64.dp), stage = stg, bob = false)
+                    // The whole evolution line, so you can see who they grow into.
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        (1..3).forEach { stg ->
+                            if (stg > 1) Text("›", color = Faint, fontSize = 20.sp)
+                            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                                CreatureView(s.species, Modifier.size(if (on) 92.dp else 72.dp), stage = stg, bob = on)
+                                Text(s.stages[stg - 1], color = if (stg == 1) Paper else Faint, fontSize = 11.sp)
                             }
                         }
                     }
